@@ -1,12 +1,10 @@
 services:
   - type: web
-    name: batidz-backend
+    name: batidz-samya-backend-2026
     env: node
     buildCommand: npm install
     startCommand: npm start
     envVars:
-      - key: PORT
-        value: 10000
       - key: DB_HOST
         value: byp6fgjv18wqrgwu3urk-mysql.services.clever-cloud.com
       - key: DB_USER
@@ -19,3 +17,5 @@ services:
         value: 3306
       - key: JWT_SECRET
         value: superCleSecrete123456
+      - key: PORT
+        value: 10000
