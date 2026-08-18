@@ -27,3 +27,8 @@ app.use('/api/annonces', require('./routes/annonces'));
 app.listen(PORT, () => {
     console.log(`🚀 Serveur BATIDZ démarré sur http://localhost:${PORT}`);
 });
+// Routes
+// ⭐ AJOUTER CES 3 LIGNES
+app.use('/api/chantiers', require('./routes/chantiers'));
+app.use('/api/besoins', require('./routes/besoins'));
+app.use('/api/missions', require('./routes/missions'));
