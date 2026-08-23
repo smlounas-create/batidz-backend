@@ -4,12 +4,14 @@
 
 const express = require('express');
 const router = express.Router();
-const Mission = require('../models/Mission');
+
 const authenticateToken = require('../middleware/auth');
 
 // ⭐ 3. GET /api/missions/ouvrier - Récupérer les missions d'un ouvrier
 router.get('/ouvrier', authenticateToken, async (req, res) => {
     try {
+        // ✅ Utiliser la base de données directement
+const db = req.app.get('db');
         const ouvrierId = req.user.id;
         
         const missions = await Mission.find({ ouvrier_id: ouvrierId })
