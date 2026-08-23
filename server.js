@@ -87,6 +87,15 @@ app.get('/', (req, res) => {
         }
     });
 });
+// server.js - Ajouter ces lignes APRÈS les routes d'authentification
+
+// ⭐ Routes des chantiers
+const chantierRoutes = require('./routes/chantiers');
+app.use('/api/chantiers', chantierRoutes);
+
+// ⭐ Routes des besoins (si pas déjà fait)
+const besoinRoutes = require('./routes/besoins');
+app.use('/api/besoins', besoinRoutes);
 
 // ============================================================
 // 4. GESTION DES ERREURS
