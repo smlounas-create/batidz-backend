@@ -4,12 +4,13 @@
 
 const express = require('express');
 const router = express.Router();
-const User = require('../models/User');
+
 const authenticateToken = require('../middleware/auth');
 
 // ⭐ 5. PUT /api/utilisateurs/disponibilite - Mettre à jour la disponibilité
 router.put('/disponibilite', authenticateToken, async (req, res) => {
     try {
+         const db = req.app.get('db');
         const userId = req.user.id;
         const { disponible } = req.body;
         
