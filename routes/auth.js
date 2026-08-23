@@ -6,6 +6,26 @@ const { body, validationResult } = require('express-validator');
 const router = express.Router();
 
 // ============================================================
+// MIDDLEWARE D'AUTHENTIFICATION
+// ============================================================
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ message: 'Token manquant' });
+    }
+    
+    jwt.verify(token, process.env.JWT_SECRET || 'secret_development', (err, user) => {
+        if (err) {
+            return res.status(403).json({ message: 'Token invalide' });
+        }
+        req.user = user;
+        next();
+    });
+};
+
+// ============================================================
 // INSCRIPTION
 // ============================================================
 router.post('/inscription', [
@@ -20,7 +40,16 @@ router.post('/inscription', [
         return res.status(400).json({ erreurs: errors.array() });
     }
 
-    const { nom_complet, email, telephone, mot_de_passe, profil, wilaya } = req.body;
+    const { 
+        nom_complet, email, telephone, mot_de_passe, profil, wilaya,
+        // Champs spécifiques
+        metier, experience, tranche_horaire, salaire_souhaite, 
+        type_remuneration, securite_sociale,
+        domaine, registre_commerce, qualification,
+        type_materiel, marque_materiel, annee_materiel,
+        type_materiaux, conditionnement_materiaux
+    } = req.body;
+    
     const db = req.app.get('db');
 
     try {
@@ -36,9 +65,24 @@ router.post('/inscription', [
         const mot_de_passe_hash = await bcrypt.hash(mot_de_passe, salt);
 
         const [result] = await db.query(
-            `INSERT INTO utilisateurs (nom_complet, email, telephone, mot_de_passe, profil, wilaya) 
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [nom_complet, email, telephone, mot_de_passe_hash, profil, wilaya]
+            `INSERT INTO utilisateurs (
+                nom_complet, email, telephone, mot_de_passe, profil, wilaya,
+                metier, experience, tranche_horaire, salaire_souhaite, 
+                type_remuneration, securite_sociale,
+                domaine, registre_commerce, qualification,
+                type_materiel, marque_materiel, annee_materiel,
+                type_materiaux, conditionnement_materiaux,
+                disponible
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                nom_complet, email, telephone, mot_de_passe_hash, profil, wilaya,
+                metier || null, experience || null, tranche_horaire || null, salaire_souhaite || null,
+                type_remuneration || null, securite_sociale || null,
+                domaine || null, registre_commerce || null, qualification || null,
+                type_materiel || null, marque_materiel || null, annee_materiel || null,
+                type_materiaux || null, conditionnement_materiaux || null,
+                'oui' // Par défaut disponible
+            ]
         );
 
         const token = jwt.sign(
@@ -47,10 +91,16 @@ router.post('/inscription', [
             { expiresIn: '7d' }
         );
 
+        // Récupérer l'utilisateur créé
+        const [newUser] = await db.query(
+            'SELECT id, nom_complet, email, profil, wilaya, metier, experience, tranche_horaire, salaire_souhaite, type_remuneration, securite_sociale, disponible FROM utilisateurs WHERE id = ?',
+            [result.insertId]
+        );
+
         res.status(201).json({
             message: 'Inscription réussie',
             token,
-            utilisateur: { id: result.insertId, nom_complet, email, profil, wilaya }
+            utilisateur: newUser[0]
         });
     } catch (error) {
         console.error(error);
@@ -75,7 +125,7 @@ router.post('/connexion', [
 
     try {
         const [users] = await db.query(
-            'SELECT * FROM utilisateurs WHERE email = ? OR telephone = ?',
+            `SELECT * FROM utilisateurs WHERE email = ? OR telephone = ?`,
             [identifiant, identifiant]
         );
         if (users.length === 0) {
@@ -94,6 +144,7 @@ router.post('/connexion', [
             { expiresIn: '7d' }
         );
 
+        // ⭐ Renvoyer TOUTES les données utilisateur
         res.json({
             message: 'Connexion réussie',
             token,
@@ -101,8 +152,24 @@ router.post('/connexion', [
                 id: user.id,
                 nom_complet: user.nom_complet,
                 email: user.email,
+                telephone: user.telephone,
                 profil: user.profil,
-                wilaya: user.wilaya
+                wilaya: user.wilaya,
+                metier: user.metier,
+                experience: user.experience,
+                tranche_horaire: user.tranche_horaire,
+                salaire_souhaite: user.salaire_souhaite,
+                type_remuneration: user.type_remuneration,
+                securite_sociale: user.securite_sociale,
+                disponible: user.disponible || 'oui',
+                domaine: user.domaine,
+                registre_commerce: user.registre_commerce,
+                qualification: user.qualification,
+                type_materiel: user.type_materiel,
+                marque_materiel: user.marque_materiel,
+                annee_materiel: user.annee_materiel,
+                type_materiaux: user.type_materiaux,
+                conditionnement_materiaux: user.conditionnement_materiaux
             }
         });
     } catch (error) {
@@ -112,6 +179,138 @@ router.post('/connexion', [
 });
 
 // ============================================================
+// ⭐⭐⭐ NOUVEAUX ENDPOINTS À AJOUTER ⭐⭐⭐
+// ============================================================
+
+// ============================================================
+// 1. GET /api/auth/me - Récupérer le profil
+// ============================================================
+router.get('/me', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    
+    try {
+        const [users] = await db.query(
+            `SELECT id, nom_complet, email, telephone, profil, wilaya,
+                    metier, experience, tranche_horaire, salaire_souhaite,
+                    type_remuneration, securite_sociale, disponible,
+                    domaine, registre_commerce, qualification,
+                    type_materiel, marque_materiel, annee_materiel,
+                    type_materiaux, conditionnement_materiaux
+             FROM utilisateurs 
+             WHERE id = ?`,
+            [req.user.id]
+        );
+        
+        if (users.length === 0) {
+            return res.status(404).json({ message: 'Utilisateur non trouvé' });
+        }
+        
+        res.json(users[0]);
+    } catch (error) {
+        console.error('Erreur GET /me:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// 2. PUT /api/auth/me - Mettre à jour le profil
+// ============================================================
+router.put('/me', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    const userId = req.user.id;
+    const updates = req.body;
+    
+    // Champs autorisés à être modifiés
+    const allowedFields = [
+        'nom_complet', 'email', 'telephone', 'wilaya',
+        'metier', 'experience', 'tranche_horaire',
+        'salaire_souhaite', 'type_remuneration',
+        'securite_sociale', 'disponible',
+        'domaine', 'registre_commerce', 'qualification',
+        'type_materiel', 'marque_materiel', 'annee_materiel',
+        'type_materiaux', 'conditionnement_materiaux'
+    ];
+    
+    // Construire la requête UPDATE dynamique
+    const setClauses = [];
+    const values = [];
+    
+    for (const field of allowedFields) {
+        if (updates[field] !== undefined) {
+            setClauses.push(`${field} = ?`);
+            values.push(updates[field]);
+        }
+    }
+    
+    if (setClauses.length === 0) {
+        return res.status(400).json({ message: 'Aucun champ à mettre à jour' });
+    }
+    
+    values.push(userId);
+    const query = `UPDATE utilisateurs SET ${setClauses.join(', ')} WHERE id = ?`;
+    
+    try {
+        await db.query(query, values);
+        
+        // Récupérer l'utilisateur mis à jour
+        const [users] = await db.query(
+            `SELECT id, nom_complet, email, telephone, profil, wilaya,
+                    metier, experience, tranche_horaire, salaire_souhaite,
+                    type_remuneration, securite_sociale, disponible,
+                    domaine, registre_commerce, qualification,
+                    type_materiel, marque_materiel, annee_materiel,
+                    type_materiaux, conditionnement_materiaux
+             FROM utilisateurs 
+             WHERE id = ?`,
+            [userId]
+        );
+        
+        res.json({
+            message: 'Profil mis à jour avec succès',
+            utilisateur: users[0]
+        });
+    } catch (error) {
+        console.error('Erreur PUT /me:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// 3. PUT /api/auth/disponibilite - Mettre à jour la disponibilité
+// ============================================================
+router.put('/disponibilite', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    const userId = req.user.id;
+    const { disponible } = req.body;
+    
+    if (!disponible || !['oui', 'non'].includes(disponible)) {
+        return res.status(400).json({
+            message: 'La disponibilité doit être "oui" ou "non"'
+        });
+    }
+    
+    try {
+        await db.query(
+            'UPDATE utilisateurs SET disponible = ? WHERE id = ?',
+            [disponible, userId]
+        );
+        
+        const [users] = await db.query(
+            'SELECT id, disponible FROM utilisateurs WHERE id = ?',
+            [userId]
+        );
+        
+        res.json({
+            message: 'Disponibilité mise à jour',
+            disponible: users[0].disponible
+        });
+    } catch (error) {
+        console.error('Erreur PUT /disponibilite:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
 // EXPORTER LE ROUTER
 // ============================================================
-module.exports = router;  // ⚠️ VÉRIFIEZ BIEN CETTE LIGNE
+module.exports = router;
