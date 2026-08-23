@@ -1,37 +1,50 @@
 const express = require('express');
-const auth = require('../middleware/auth');
+const authenticateToken = require('../middleware/auth');
 const router = express.Router();
 
 // ============================================================
 // AJOUTER UN BESOIN (POST)
 // ============================================================
-router.post('/', auth, async (req, res) => {
-    const { chantier_id, categorie, titre, description, quantite, unite, budget_estime, date_besoin } = req.body;
+router.post('/', authenticateToken, async (req, res) => {
+    const { chantier_id, categorie, titre, description, quantite, unite, budget_estime } = req.body;
     const db = req.app.get('db');
 
-    if (req.utilisateur.profil !== 'entrepreneur') {
+    // Vérifier que l'utilisateur est un entrepreneur
+    if (req.user.profil !== 'entrepreneur') {
         return res.status(403).json({ message: 'Seul un entrepreneur peut ajouter un besoin' });
     }
 
+    // Validation des champs obligatoires
+    if (!chantier_id || !categorie || !titre) {
+        return res.status(400).json({ message: 'Champs obligatoires manquants' });
+    }
+
     try {
+        // Vérifier que le chantier appartient à l'entrepreneur
         const [chantier] = await db.query(
             `SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?`,
-            [chantier_id, req.utilisateur.id]
+            [chantier_id, req.user.id]
         );
         if (chantier.length === 0) {
             return res.status(404).json({ message: 'Chantier non trouvé ou non autorisé' });
         }
 
+        // ⭐ SUPPRESSION DE date_besoins
         const [result] = await db.query(
             `INSERT INTO besoins_chantier 
-            (chantier_id, categorie, titre, description, quantite, unite, budget_estime, date_besoin) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [chantier_id, categorie, titre, description, quantite, unite, budget_estime, date_besoin]
+            (chantier_id, categorie, titre, description, quantite, unite, budget_estime, statut) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'en_attente')`,
+            [chantier_id, categorie, titre, description, quantite || 1, unite || null, budget_estime || null]
+        );
+
+        const [newBesoin] = await db.query(
+            'SELECT * FROM besoins_chantier WHERE id = ?',
+            [result.insertId]
         );
 
         res.status(201).json({
             message: 'Besoin ajouté avec succès',
-            besoin: { id: result.insertId, chantier_id, categorie, titre }
+            besoin: newBesoin[0]
         });
     } catch (error) {
         console.error('Erreur SQL:', error);
@@ -42,7 +55,7 @@ router.post('/', auth, async (req, res) => {
 // ============================================================
 // RÉCUPÉRER LES BESOINS D'UN CHANTIER (GET)
 // ============================================================
-router.get('/chantier/:chantier_id', auth, async (req, res) => {
+router.get('/chantier/:chantier_id', authenticateToken, async (req, res) => {
     const { chantier_id } = req.params;
     const db = req.app.get('db');
 
@@ -53,7 +66,7 @@ router.get('/chantier/:chantier_id', auth, async (req, res) => {
                     (quantite - quantite_trouvee) AS besoin_restant
              FROM besoins_chantier 
              WHERE chantier_id = ?
-             ORDER BY date_besoin ASC`,
+             ORDER BY id DESC`,
             [chantier_id]
         );
         res.json(besoins);
@@ -66,7 +79,7 @@ router.get('/chantier/:chantier_id', auth, async (req, res) => {
 // ============================================================
 // RÉCUPÉRER UN BESOIN PAR ID (GET)
 // ============================================================
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const db = req.app.get('db');
 
@@ -88,17 +101,18 @@ router.get('/:id', auth, async (req, res) => {
 // ============================================================
 // MODIFIER UN BESOIN (PUT)
 // ============================================================
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const { categorie, titre, description, quantite, unite, budget_estime, date_besoin, statut } = req.body;
+    const { categorie, titre, description, quantite, unite, budget_estime, statut } = req.body;
     const db = req.app.get('db');
 
     try {
+        // ⭐ SUPPRESSION DE date_besoins
         const [result] = await db.query(
             `UPDATE besoins_chantier 
-             SET categorie = ?, titre = ?, description = ?, quantite = ?, unite = ?, budget_estime = ?, date_besoin = ?, statut = ?
+             SET categorie = ?, titre = ?, description = ?, quantite = ?, unite = ?, budget_estime = ?, statut = ?
              WHERE id = ?`,
-            [categorie, titre, description, quantite, unite, budget_estime, date_besoin, statut, id]
+            [categorie, titre, description, quantite, unite, budget_estime, statut, id]
         );
 
         if (result.affectedRows === 0) {
@@ -115,7 +129,7 @@ router.put('/:id', auth, async (req, res) => {
 // ============================================================
 // SUPPRIMER UN BESOIN (DELETE)
 // ============================================================
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const db = req.app.get('db');
 
@@ -139,7 +153,7 @@ router.delete('/:id', auth, async (req, res) => {
 // ============================================================
 // METTRE À JOUR LA PROGRESSION
 // ============================================================
-router.put('/:id/progression', auth, async (req, res) => {
+router.put('/:id/progression', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { quantite_trouvee } = req.body;
     const db = req.app.get('db');
@@ -177,7 +191,7 @@ router.put('/:id/progression', auth, async (req, res) => {
 // ============================================================
 // VALIDER UN BESOIN COMME SATISFAIT
 // ============================================================
-router.put('/:id/valider', auth, async (req, res) => {
+router.put('/:id/valider', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const db = req.app.get('db');
 
