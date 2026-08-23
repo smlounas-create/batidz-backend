@@ -1,34 +1,26 @@
+// ============================================================
+// FICHIER: server.js (ou app.js)
+// ============================================================
+
 const express = require('express');
-const cors = require('cors');
-const dotenv = require('dotenv');
-
-dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 3000;
+const mongoose = require('mongoose');
 
-app.use(cors({
-    origin: '*',  // ⚠️ Pour Render/Netlify
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// Import des routes
+const authRoutes = require('./routes/auth');
+const missionRoutes = require('./routes/missions');
+const utilisateurRoutes = require('./routes/utilisateurs');
+
+// Middleware
 app.use(express.json());
 
-const db = require('./config/database');
-app.set('db', db);
+// ⭐ Enregistrer les routes
+app.use('/api/auth', authRoutes);
+app.use('/api/missions', missionRoutes);
+app.use('/api/utilisateurs', utilisateurRoutes);
 
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'OK', message: 'API BATIDZ en ligne' });
-});
-
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/annonces', require('./routes/annonces'));
-
+// Démarrer le serveur
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Serveur BATIDZ démarré sur http://localhost:${PORT}`);
+    console.log(`🚀 Serveur démarré sur le port ${PORT}`);
 });
-// Routes
-// ⭐ AJOUTER CES 3 LIGNES
-app.use('/api/chantiers', require('./routes/chantiers'));
-app.use('/api/besoins', require('./routes/besoins'));
-app.use('/api/missions', require('./routes/missions'));
