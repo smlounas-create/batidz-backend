@@ -1,124 +1,67 @@
+// ============================================================
+// FICHIER: routes/missions.js
+// ============================================================
+
 const express = require('express');
-const auth = require('../middleware/auth');
 const router = express.Router();
+const Mission = require('../models/Mission');
+const authenticateToken = require('../middleware/auth');
 
-// ============================================================
-// ENGAGER UN OUVRIER (POST)
-// ============================================================
-router.post('/', auth, async (req, res) => {
-    const { ouvrier_id, chantier_id, besoin_id, date_debut, date_fin } = req.body;
-    const db = req.app.get('db');
-
-    if (req.utilisateur.profil !== 'entrepreneur') {
-        return res.status(403).json({ message: 'Seul un entrepreneur peut engager un ouvrier' });
-    }
-
+// ⭐ 3. GET /api/missions/ouvrier - Récupérer les missions d'un ouvrier
+router.get('/ouvrier', authenticateToken, async (req, res) => {
     try {
-        const [chantier] = await db.query(
-            `SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?`,
-            [chantier_id, req.utilisateur.id]
-        );
-        if (chantier.length === 0) {
-            return res.status(404).json({ message: 'Chantier non trouvé ou non autorisé' });
+        const ouvrierId = req.user.id;
+        
+        const missions = await Mission.find({ ouvrier_id: ouvrierId })
+            .populate('chantier_id', 'nom wilaya')
+            .populate('entrepreneur_id', 'nom_complet');
+        
+        const formattedMissions = missions.map(m => ({
+            id: m._id,
+            chantier_nom: m.chantier_id?.nom || 'Chantier',
+            entrepreneur_nom: m.entrepreneur_id?.nom_complet || 'Non défini',
+            wilaya: m.chantier_id?.wilaya || 'Non défini',
+            statut: m.statut || 'en_cours',
+            note: m.note || null,
+            date_debut: m.date_debut,
+            date_fin: m.date_fin
+        }));
+        
+        res.json(formattedMissions);
+    } catch (error) {
+        console.error('Erreur GET /missions/ouvrier:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ⭐ 4. PUT /api/missions/:id/note - Noter une mission
+router.put('/:id/note', authenticateToken, async (req, res) => {
+    try {
+        const missionId = req.params.id;
+        const { note } = req.body;
+        
+        if (!note || note < 1 || note > 5) {
+            return res.status(400).json({
+                message: 'La note doit être comprise entre 1 et 5'
+            });
         }
-
-        const [result] = await db.query(
-            `INSERT INTO missions 
-            (entrepreneur_id, ouvrier_id, chantier_id, besoin_id, date_debut, date_fin, statut) 
-            VALUES (?, ?, ?, ?, ?, ?, 'en_cours')`,
-            [req.utilisateur.id, ouvrier_id, chantier_id, besoin_id, date_debut, date_fin]
+        
+        const mission = await Mission.findByIdAndUpdate(
+            missionId,
+            { note: note },
+            { new: true }
         );
-
-        await db.query(
-            `UPDATE besoins_chantier SET statut = 'en_cours' WHERE id = ?`,
-            [besoin_id]
-        );
-
-        res.status(201).json({
-            message: 'Ouvrier engagé avec succès',
-            mission: { id: result.insertId, ouvrier_id, chantier_id, date_debut, date_fin }
-        });
-    } catch (error) {
-        console.error('Erreur SQL:', error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
-});
-
-// ============================================================
-// RÉCUPÉRER LES MISSIONS D'UN ENTREPRENEUR (GET)
-// ============================================================
-router.get('/entrepreneur', auth, async (req, res) => {
-    const db = req.app.get('db');
-
-    try {
-        const [missions] = await db.query(
-            `SELECT m.*, u.nom_complet as ouvrier_nom, c.nom as chantier_nom 
-             FROM missions m
-             JOIN utilisateurs u ON m.ouvrier_id = u.id
-             JOIN chantiers c ON m.chantier_id = c.id
-             WHERE m.entrepreneur_id = ?
-             ORDER BY m.date_creation DESC`,
-            [req.utilisateur.id]
-        );
-        res.json(missions);
-    } catch (error) {
-        console.error('Erreur SQL:', error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
-});
-
-// ============================================================
-// RÉCUPÉRER LES MISSIONS D'UN OUVRIER (GET)
-// ============================================================
-router.get('/ouvrier', auth, async (req, res) => {
-    const db = req.app.get('db');
-
-    try {
-        const [missions] = await db.query(
-            `SELECT m.*, u.nom_complet as entrepreneur_nom, c.nom as chantier_nom 
-             FROM missions m
-             JOIN utilisateurs u ON m.entrepreneur_id = u.id
-             JOIN chantiers c ON m.chantier_id = c.id
-             WHERE m.ouvrier_id = ?
-             ORDER BY m.date_creation DESC`,
-            [req.utilisateur.id]
-        );
-        res.json(missions);
-    } catch (error) {
-        console.error('Erreur SQL:', error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
-});
-
-// ============================================================
-// TERMINER UNE MISSION (PUT)
-// ============================================================
-router.put('/:id/terminer', auth, async (req, res) => {
-    const { id } = req.params;
-    const db = req.app.get('db');
-
-    try {
-        const [mission] = await db.query(
-            `SELECT * FROM missions WHERE id = ? AND entrepreneur_id = ?`,
-            [id, req.utilisateur.id]
-        );
-        if (mission.length === 0) {
+        
+        if (!mission) {
             return res.status(404).json({ message: 'Mission non trouvée' });
         }
-
-        await db.query(
-            `UPDATE missions SET statut = 'terminee', date_fin = CURDATE() WHERE id = ?`,
-            [id]
-        );
-
-        await db.query(
-            `UPDATE besoins_chantier SET statut = 'satisfait' WHERE id = ?`,
-            [mission[0].besoin_id]
-        );
-
-        res.json({ message: 'Mission terminée avec succès' });
+        
+        res.json({
+            message: 'Mission notée avec succès',
+            note: mission.note
+        });
     } catch (error) {
-        console.error('Erreur SQL:', error);
+        console.error('Erreur PUT /missions/:id/note:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
