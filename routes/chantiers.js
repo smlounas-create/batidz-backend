@@ -1,29 +1,39 @@
 const express = require('express');
-const auth = require('../middleware/auth');
+const authenticateToken = require('../middleware/auth');  // ⭐ Renommé pour clarté
 const router = express.Router();
 
 // ============================================================
 // CRÉER UN CHANTIER (POST)
 // ============================================================
-router.post('/', auth, async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
     const { nom, description, wilaya, adresse, date_debut, date_fin_prevue } = req.body;
     const db = req.app.get('db');
 
-    if (req.utilisateur.profil !== 'entrepreneur') {
+    // ⭐ CORRECTION: req.user au lieu de req.utilisateur
+    if (!req.user || req.user.profil !== 'entrepreneur') {
         return res.status(403).json({ message: 'Seul un entrepreneur peut créer un chantier' });
+    }
+
+    if (!nom || !wilaya) {
+        return res.status(400).json({ message: 'Nom et wilaya requis' });
     }
 
     try {
         const [result] = await db.query(
             `INSERT INTO chantiers 
-            (entrepreneur_id, nom, description, wilaya, adresse, date_debut, date_fin_prevue) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [req.utilisateur.id, nom, description, wilaya, adresse, date_debut, date_fin_prevue]
+            (entrepreneur_id, nom, description, wilaya, adresse, date_debut, date_fin_prevue, statut) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'en_cours')`,
+            [req.user.id, nom, description, wilaya, adresse || null, date_debut || null, date_fin_prevue || null]
+        );
+
+        const [newChantier] = await db.query(
+            'SELECT * FROM chantiers WHERE id = ?',
+            [result.insertId]
         );
 
         res.status(201).json({
             message: 'Chantier créé avec succès',
-            chantier: { id: result.insertId, nom, description, wilaya }
+            chantier: newChantier[0]
         });
     } catch (error) {
         console.error('Erreur SQL:', error);
@@ -34,18 +44,32 @@ router.post('/', auth, async (req, res) => {
 // ============================================================
 // RÉCUPÉRER LES CHANTIERS (GET)
 // ============================================================
-router.get('/', auth, async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
 
-    if (req.utilisateur.profil !== 'entrepreneur') {
+    // ⭐ CORRECTION: req.user au lieu de req.utilisateur
+    if (!req.user || req.user.profil !== 'entrepreneur') {
         return res.status(403).json({ message: 'Seul un entrepreneur peut voir ses chantiers' });
     }
 
     try {
+        console.log('👤 Récupération des chantiers pour l\'entrepreneur ID:', req.user.id);
+        
         const [chantiers] = await db.query(
-            `SELECT * FROM chantiers WHERE entrepreneur_id = ? ORDER BY date_creation DESC`,
-            [req.utilisateur.id]
+            `SELECT c.*, 
+                    COALESCE(
+                        (SELECT SUM(b.quantite_trouvee) / NULLIF(SUM(b.quantite), 0) * 100 
+                         FROM besoins_chantier b 
+                         WHERE b.chantier_id = c.id), 
+                        0
+                    ) as avancement
+             FROM chantiers c 
+             WHERE c.entrepreneur_id = ? 
+             ORDER BY c.date_creation DESC`,
+            [req.user.id]
         );
+
+        console.log('📦 Chantiers trouvés:', chantiers.length);
         res.json(chantiers);
     } catch (error) {
         console.error('Erreur SQL:', error);
@@ -56,14 +80,14 @@ router.get('/', auth, async (req, res) => {
 // ============================================================
 // RÉCUPÉRER UN CHANTIER PAR ID (GET)
 // ============================================================
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const db = req.app.get('db');
 
     try {
         const [chantiers] = await db.query(
             `SELECT * FROM chantiers WHERE id = ? AND entrepreneur_id = ?`,
-            [id, req.utilisateur.id]
+            [id, req.user.id]
         );
         if (chantiers.length === 0) {
             return res.status(404).json({ message: 'Chantier non trouvé' });
@@ -78,7 +102,7 @@ router.get('/:id', auth, async (req, res) => {
 // ============================================================
 // MODIFIER UN CHANTIER (PUT)
 // ============================================================
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { nom, description, wilaya, adresse, date_debut, date_fin_prevue, statut } = req.body;
     const db = req.app.get('db');
@@ -88,7 +112,7 @@ router.put('/:id', auth, async (req, res) => {
             `UPDATE chantiers 
              SET nom = ?, description = ?, wilaya = ?, adresse = ?, date_debut = ?, date_fin_prevue = ?, statut = ?
              WHERE id = ? AND entrepreneur_id = ?`,
-            [nom, description, wilaya, adresse, date_debut, date_fin_prevue, statut, id, req.utilisateur.id]
+            [nom, description, wilaya, adresse, date_debut, date_fin_prevue, statut, id, req.user.id]
         );
 
         if (result.affectedRows === 0) {
@@ -105,14 +129,14 @@ router.put('/:id', auth, async (req, res) => {
 // ============================================================
 // SUPPRIMER UN CHANTIER (DELETE)
 // ============================================================
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const db = req.app.get('db');
 
     try {
         const [result] = await db.query(
             `DELETE FROM chantiers WHERE id = ? AND entrepreneur_id = ?`,
-            [id, req.utilisateur.id]
+            [id, req.user.id]
         );
 
         if (result.affectedRows === 0) {
