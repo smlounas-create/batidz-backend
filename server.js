@@ -93,9 +93,20 @@ app.get('/', (req, res) => {
 const chantierRoutes = require('./routes/chantiers');
 app.use('/api/chantiers', chantierRoutes);
 
-// ⭐ Routes des besoins (si pas déjà fait)
+// ⭐ Routes des besoins (si pas déjà fait)// ⭐ Routes des annonces
+const annonceRoutes = require('./routes/annonces');
+app.use('/api/annonces', annonceRoutes);
+
+// ⭐ Routes des missions
+const missionRoutes = require('./routes/missions');
+app.use('/api/missions', missionRoutes);
+
+// ⭐ Routes des utilisateurs
+const utilisateurRoutes = require('./routes/utilisateurs');
+app.use('/api/utilisateurs', utilisateurRoutes);
 const besoinRoutes = require('./routes/besoins');
 app.use('/api/besoins', besoinRoutes);
+
 
 // ============================================================
 // 4. GESTION DES ERREURS
