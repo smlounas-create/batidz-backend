@@ -5,7 +5,7 @@ const { body, validationResult } = require('express-validator');
 const router = express.Router();
 
 // ============================================================
-// CRÉER UNE ANNONCE
+// CRÉER UNE ANNONCE (POST)
 // ============================================================
 router.post('/', authenticateToken, [
     body('type_annonce').isIn(['recherche', 'proposition']),
@@ -19,7 +19,6 @@ router.post('/', authenticateToken, [
         return res.status(400).json({ erreurs: errors.array() });
     }
 
-    // ⭐ CORRECTION: req.user au lieu de req.utilisateur
     if (!req.user) {
         return res.status(401).json({ message: 'Utilisateur non authentifié' });
     }
@@ -51,7 +50,7 @@ router.post('/', authenticateToken, [
 });
 
 // ============================================================
-// RECHERCHER DES ANNONCES
+// RECHERCHER DES ANNONCES (GET)
 // ============================================================
 router.get('/', async (req, res) => {
     const { wilaya, categorie, type_annonce, disponible } = req.query;
@@ -66,24 +65,25 @@ router.get('/', async (req, res) => {
         `;
         const params = [];
 
-        if (wilaya) {
+        if (wilaya && wilaya !== '') {
             query += ' AND a.wilaya = ?';
             params.push(wilaya);
         }
-        if (categorie) {
+        if (categorie && categorie !== '') {
             query += ' AND a.categorie = ?';
             params.push(categorie);
         }
-        if (type_annonce) {
+        if (type_annonce && type_annonce !== '') {
             query += ' AND a.type_annonce = ?';
             params.push(type_annonce);
         }
-        if (disponible) {
+        if (disponible && disponible !== '') {
             query += ' AND u.disponible = ?';
             params.push(disponible);
         }
 
         query += ' ORDER BY a.date_creation DESC LIMIT 50';
+
         const [annonces] = await db.query(query, params);
         res.json(annonces);
     } catch (error) {
@@ -93,7 +93,31 @@ router.get('/', async (req, res) => {
 });
 
 // ============================================================
-// OBTENIR UNE ANNONCE SPÉCIFIQUE
+// ⭐ NOUVEAU : RÉCUPÉRER MES ANNONCES
+// ============================================================
+router.get('/mes-annonces', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    const userId = req.user.id;
+
+    try {
+        const [annonces] = await db.query(
+            `SELECT a.*, u.nom_complet, u.profil, u.disponible
+             FROM annonces a
+             JOIN utilisateurs u ON a.utilisateur_id = u.id
+             WHERE a.utilisateur_id = ?
+             ORDER BY a.date_creation DESC`,
+            [userId]
+        );
+
+        res.json(annonces);
+    } catch (error) {
+        console.error('Erreur GET /annonces/mes-annonces:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// OBTENIR UNE ANNONCE SPÉCIFIQUE (GET)
 // ============================================================
 router.get('/:id', async (req, res) => {
     const { id } = req.params;
@@ -118,7 +142,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // ============================================================
-// SUPPRIMER UNE ANNONCE
+// SUPPRIMER UNE ANNONCE (DELETE)
 // ============================================================
 router.delete('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
@@ -142,7 +166,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // ============================================================
-// METTRE À JOUR LE STATUT D'UNE ANNONCE
+// METTRE À JOUR LE STATUT D'UNE ANNONCE (PUT)
 // ============================================================
 router.put('/:id/statut', authenticateToken, async (req, res) => {
     const { id } = req.params;
