@@ -7,6 +7,7 @@ const router = express.Router();
 // ============================================================
 // CRÉER UNE ANNONCE (POST)
 // ============================================================
+// ============================================================
 router.post('/', authenticateToken, [
     body('type_annonce').isIn(['recherche', 'proposition']),
     body('categorie').isIn(['main_oeuvre', 'materiel', 'materiaux']),
@@ -27,6 +28,48 @@ router.post('/', authenticateToken, [
     const db = req.app.get('db');
 
     try {
+        // ⭐ 1. Récupérer les informations de l'utilisateur
+        const [user] = await db.query(
+            `SELECT id, profil, credits, solde, abonnement_statut, abonnement_date_fin 
+             FROM utilisateurs 
+             WHERE id = ?`,
+            [req.user.id]
+        );
+
+        if (user.length === 0) {
+            return res.status(404).json({ message: 'Utilisateur non trouvé' });
+        }
+
+        // ⭐ 2. VÉRIFICATION DES CRÉDITS (ouvrier / fournisseur)
+        if (user[0].profil === 'ouvrier' || user[0].profil === 'fournisseur_materiel' || user[0].profil === 'fournisseur_materiaux') {
+            
+            // Vérifier si l'utilisateur a des crédits
+            if (user[0].credits < 1) {
+                return res.status(402).json({ 
+                    message: 'Crédits insuffisants pour publier une annonce',
+                    credits: user[0].credits,
+                    solde: user[0].solde,
+                    cout: user[0].profil === 'ouvrier' ? 500 : 1000
+                });
+            }
+        }
+
+        // ⭐ 3. VÉRIFICATION DE L'ABONNEMENT (entrepreneur)
+        if (user[0].profil === 'entrepreneur') {
+            // Vérifier si l'abonnement est actif et non expiré
+            const dateFin = new Date(user[0].abonnement_date_fin);
+            const now = new Date();
+            
+            if (user[0].abonnement_statut !== 'actif' || dateFin < now) {
+                return res.status(402).json({ 
+                    message: 'Abonnement actif requis pour créer une annonce',
+                    abonnement_statut: user[0].abonnement_statut,
+                    date_fin: user[0].abonnement_date_fin
+                });
+            }
+        }
+
+        // ⭐ 4. Insérer l'annonce
         const [result] = await db.query(
             `INSERT INTO annonces 
             (utilisateur_id, type_annonce, categorie, titre, description, wilaya, budget, statut) 
@@ -39,15 +82,43 @@ router.post('/', authenticateToken, [
             [result.insertId]
         );
 
+        // ⭐ 5. Déduire 1 crédit pour ouvrier/fournisseur
+        let creditsRestants = null;
+        if (user[0].profil === 'ouvrier' || user[0].profil === 'fournisseur_materiel' || user[0].profil === 'fournisseur_materiaux') {
+            await db.query(
+                'UPDATE utilisateurs SET credits = credits - 1 WHERE id = ?',
+                [req.user.id]
+            );
+            
+            // Récupérer les crédits restants
+            const [updatedUser] = await db.query(
+                'SELECT credits FROM utilisateurs WHERE id = ?',
+                [req.user.id]
+            );
+            creditsRestants = updatedUser[0].credits;
+
+            // ⭐ 6. Enregistrer le paiement
+            const cout = user[0].profil === 'ouvrier' ? 500 : 1000;
+            await db.query(
+                `INSERT INTO paiements_annonces 
+                 (annonce_id, utilisateur_id, montant, statut, date_paiement) 
+                 VALUES (?, ?, ?, 'paye', NOW())`,
+                [result.insertId, req.user.id, cout]
+            );
+        }
+
         res.status(201).json({
             message: 'Annonce créée avec succès',
-            annonce: newAnnonce[0]
+            annonce: newAnnonce[0],
+            credits_restants: creditsRestants
         });
+
     } catch (error) {
         console.error('Erreur SQL:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
+
 
 // ============================================================
 // RECHERCHER DES ANNONCES (GET)
