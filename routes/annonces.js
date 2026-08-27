@@ -15,7 +15,10 @@ router.post('/', authenticateToken, [
     body('description').notEmpty().withMessage('Description requise'),
     body('wilaya').notEmpty().withMessage('Wilaya requise')
 ], async (req, res) => {
-    const errors = validationResult(req);
+    console.log('🔍 ===== DEBUT CREATION ANNONCE =====');
+    console.log('📦 Body reçu:', req.body);
+    console.log('👤 Utilisateur (req.user):', req.user);
+   const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ erreurs: errors.array() });
     }
@@ -28,7 +31,8 @@ router.post('/', authenticateToken, [
     const db = req.app.get('db');
 
     try {
-        // ⭐ 1. Récupérer les informations de l'utilisateur
+ console.log('🔍 1. Récupération de l\'utilisateur ID:', req.user.id);
+       // ⭐ 1. Récupérer les informations de l'utilisateur
         const [user] = await db.query(
             `SELECT id, profil, credits, solde, abonnement_statut, abonnement_date_fin 
              FROM utilisateurs 
@@ -39,10 +43,10 @@ router.post('/', authenticateToken, [
         if (user.length === 0) {
             return res.status(404).json({ message: 'Utilisateur non trouvé' });
         }
-
+ console.log('👤 Utilisateur trouvé:', user[0]);
         // ⭐ 2. VÉRIFICATION DES CRÉDITS (ouvrier / fournisseur)
         if (user[0].profil === 'ouvrier' || user[0].profil === 'fournisseur_materiel' || user[0].profil === 'fournisseur_materiaux') {
-            
+            console.log('🔍 2. Vérification des crédits:', user[0].credits);  
             // Vérifier si l'utilisateur a des crédits
             if (user[0].credits < 1) {
                 return res.status(402).json({ 
@@ -53,7 +57,7 @@ router.post('/', authenticateToken, [
                 });
             }
         }
-
+  console.log('🔍 3. Insertion de l\'annonce...');
         // ⭐ 3. VÉRIFICATION DE L'ABONNEMENT (entrepreneur)
         if (user[0].profil === 'entrepreneur') {
             // Vérifier si l'abonnement est actif et non expiré
@@ -76,7 +80,7 @@ router.post('/', authenticateToken, [
             VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
             [req.user.id, categorie, titre, description, wilaya || null]
         );
-
+ console.log('✅ Annonce insérée, ID:', result.insertId);
         const [newAnnonce] = await db.query(
             'SELECT * FROM annonces WHERE id = ?',
             [result.insertId]
@@ -85,7 +89,8 @@ router.post('/', authenticateToken, [
         // ⭐ 5. Déduire 1 crédit pour ouvrier/fournisseur
         let creditsRestants = null;
         if (user[0].profil === 'ouvrier' || user[0].profil === 'fournisseur_materiel' || user[0].profil === 'fournisseur_materiaux') {
-            await db.query(
+            console.log('🔍 4. Déduction d\'un crédit'); 
+           await db.query(
                 'UPDATE utilisateurs SET credits = credits - 1 WHERE id = ?',
                 [req.user.id]
             );
@@ -106,7 +111,7 @@ router.post('/', authenticateToken, [
                 [result.insertId, req.user.id, cout]
             );
         }
-
+  console.log('✅ Annonce créée avec succès !');
         res.status(201).json({
             message: 'Annonce créée avec succès',
             annonce: newAnnonce[0],
