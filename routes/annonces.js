@@ -77,8 +77,8 @@ router.post('/', authenticateToken, [
         const [result] = await db.query(
             `INSERT INTO annonces 
             (utilisateur_id, categorie, titre, description, wilaya, statut) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-            [req.user.id, categorie, titre, description, wilaya || null]
+            VALUES (?, ?, ?, ?, ?, ?)`,
+            [req.user.id, categorie, titre, description, wilaya, 'active' ]
         );
  console.log('✅ Annonce insérée, ID:', result.insertId);
         const [newAnnonce] = await db.query(
