@@ -47,7 +47,7 @@ router.post('/inscription', [
         type_remuneration, securite_sociale,
          registre_commerce, qualification,
         marque_materiel, annee_materiel,
-        conditionnemecreditsnt_materiaux
+        conditionnement_materiaux
     } = req.body;
     
     const db = req.app.get('db');
@@ -72,7 +72,7 @@ router.post('/inscription', [
                 registre_commerce, qualification,
                marque_materiel, annee_materiel,
                 conditionnement_materiaux,
-                disponible
+                disponible, credits
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 nom_complet, email, telephone, mot_de_passe_hash, profil, wilaya,
@@ -81,7 +81,7 @@ router.post('/inscription', [
                  registre_commerce || null, qualification || null,
                 marque_materiel || null, annee_materiel || null,
                  conditionnement_materiaux || null,
-                'oui' // Par défaut disponible
+                'oui' , 5  // ⭐ 5 crédits offert
             ]
         );
 
@@ -225,7 +225,7 @@ router.put('/me', authenticateToken, async (req, res) => {
         'nom_complet', 'email', 'telephone', 'wilaya',
         'specialite',  'experience', 'tranche_horaire',
         'salaire_souhaite', 'type_remuneration',
-        'securite_sociale', 'disponible',
+        'securite_sociale', 'disponible',credits,
         'registre_commerce', 'qualification',
          'marque_materiel', 'annee_materiel',
          'conditionnement_materiaux'
