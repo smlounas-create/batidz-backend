@@ -9,7 +9,7 @@ const router = express.Router();
 // ============================================================
 // ============================================================
 router.post('/', authenticateToken, [
-    body('type_annonce').isIn(['recherche', 'proposition']),
+   
     body('categorie').isIn(['main_oeuvre', 'materiel', 'materiaux']),
     body('titre').notEmpty().withMessage('Titre requis'),
     body('description').notEmpty().withMessage('Description requise'),
@@ -72,9 +72,9 @@ router.post('/', authenticateToken, [
         // ⭐ 4. Insérer l'annonce
         const [result] = await db.query(
             `INSERT INTO annonces 
-            (utilisateur_id, type_annonce, categorie, titre, description, wilaya, budget, statut) 
+            (utilisateur_id, categorie, titre, description, wilaya, statut) 
             VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-            [req.user.id, type_annonce, categorie, titre, description, wilaya, budget || null]
+            [req.user.id, categorie, titre, description, wilaya || null]
         );
 
         const [newAnnonce] = await db.query(
@@ -124,7 +124,7 @@ router.post('/', authenticateToken, [
 // RECHERCHER DES ANNONCES (GET)
 // ============================================================
 router.get('/', async (req, res) => {
-    const { wilaya, categorie, type_annonce, disponible } = req.query;
+    const { wilaya, categorie, disponible } = req.query;
     const db = req.app.get('db');
 
     try {
@@ -144,10 +144,7 @@ router.get('/', async (req, res) => {
             query += ' AND a.categorie = ?';
             params.push(categorie);
         }
-        if (type_annonce && type_annonce !== '') {
-            query += ' AND a.type_annonce = ?';
-            params.push(type_annonce);
-        }
+       
         if (disponible && disponible !== '') {
             query += ' AND u.disponible = ?';
             params.push(disponible);
