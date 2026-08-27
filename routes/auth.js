@@ -43,11 +43,11 @@ router.post('/inscription', [
     const { 
         nom_complet, email, telephone, mot_de_passe, profil, wilaya,
         // Champs spécifiques
-        metier, experience, tranche_horaire, salaire_souhaite, 
+        specialite, experience, tranche_horaire, salaire_souhaite, 
         type_remuneration, securite_sociale,
-        domaine, registre_commerce, qualification,
-        type_materiel, marque_materiel, annee_materiel,
-        type_materiaux, conditionnement_materiaux
+         registre_commerce, qualification,
+        marque_materiel, annee_materiel,
+        conditionnemecreditsnt_materiaux
     } = req.body;
     
     const db = req.app.get('db');
@@ -67,20 +67,20 @@ router.post('/inscription', [
         const [result] = await db.query(
             `INSERT INTO utilisateurs (
                 nom_complet, email, telephone, mot_de_passe, profil, wilaya,
-                metier, experience, tranche_horaire, salaire_souhaite, 
+                specialite, experience, tranche_horaire, salaire_souhaite, 
                 type_remuneration, securite_sociale,
-                domaine, registre_commerce, qualification,
-                type_materiel, marque_materiel, annee_materiel,
-                type_materiaux, conditionnement_materiaux,
+                registre_commerce, qualification,
+               marque_materiel, annee_materiel,
+                conditionnement_materiaux,
                 disponible
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 nom_complet, email, telephone, mot_de_passe_hash, profil, wilaya,
-                metier || null, experience || null, tranche_horaire || null, salaire_souhaite || null,
+                specialite || null, experience || null, tranche_horaire || null, salaire_souhaite || null,
                 type_remuneration || null, securite_sociale || null,
-                domaine || null, registre_commerce || null, qualification || null,
-                type_materiel || null, marque_materiel || null, annee_materiel || null,
-                type_materiaux || null, conditionnement_materiaux || null,
+                 registre_commerce || null, qualification || null,
+                marque_materiel || null, annee_materiel || null,
+                 conditionnement_materiaux || null,
                 'oui' // Par défaut disponible
             ]
         );
@@ -155,21 +155,21 @@ router.post('/connexion', [
                 telephone: user.telephone,
                 profil: user.profil,
                 wilaya: user.wilaya,
-                metier: user.metier,
+                specialite: user.specialite,
                 experience: user.experience,
                 tranche_horaire: user.tranche_horaire,
                 salaire_souhaite: user.salaire_souhaite,
                 type_remuneration: user.type_remuneration,
                 securite_sociale: user.securite_sociale,
                 disponible: user.disponible || 'oui',
-                domaine: user.domaine,
+              
                 registre_commerce: user.registre_commerce,
                 qualification: user.qualification,
-                type_materiel: user.type_materiel,
+               
                 marque_materiel: user.marque_materiel,
                 annee_materiel: user.annee_materiel,
-                type_materiaux: user.type_materiaux,
                 conditionnement_materiaux: user.conditionnement_materiaux
+            credits: user.credits || 0
             }
         });
     } catch (error) {
@@ -191,11 +191,11 @@ router.get('/me', authenticateToken, async (req, res) => {
     try {
         const [users] = await db.query(
             `SELECT id, nom_complet, email, telephone, profil, wilaya,
-                    metier, experience, tranche_horaire, salaire_souhaite,
+                   specialite,  experience, tranche_horaire, salaire_souhaite,
                     type_remuneration, securite_sociale, disponible,
-                    domaine, registre_commerce, qualification,
-                    type_materiel, marque_materiel, annee_materiel,
-                    type_materiaux, conditionnement_materiaux
+                    registre_commerce, qualification, credits,
+                     marque_materiel, annee_materiel,
+                     conditionnement_materiaux
              FROM utilisateurs 
              WHERE id = ?`,
             [req.user.id]
@@ -223,12 +223,12 @@ router.put('/me', authenticateToken, async (req, res) => {
     // Champs autorisés à être modifiés
     const allowedFields = [
         'nom_complet', 'email', 'telephone', 'wilaya',
-        'metier', 'experience', 'tranche_horaire',
+        'specialite',  'experience', 'tranche_horaire',
         'salaire_souhaite', 'type_remuneration',
         'securite_sociale', 'disponible',
-        'domaine', 'registre_commerce', 'qualification',
-        'type_materiel', 'marque_materiel', 'annee_materiel',
-        'type_materiaux', 'conditionnement_materiaux'
+        'registre_commerce', 'qualification',
+         'marque_materiel', 'annee_materiel',
+         'conditionnement_materiaux'
     ];
     
     // Construire la requête UPDATE dynamique
