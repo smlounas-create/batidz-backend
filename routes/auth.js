@@ -225,7 +225,7 @@ router.put('/me', authenticateToken, async (req, res) => {
         'nom_complet', 'email', 'telephone', 'wilaya',
         'specialite',  'experience', 'tranche_horaire',
         'salaire_souhaite', 'type_remuneration',
-        'securite_sociale', 'disponible',credits,
+        'securite_sociale', 'disponible',
         'registre_commerce', 'qualification',
          'marque_materiel', 'annee_materiel',
          'conditionnement_materiaux'
@@ -255,11 +255,11 @@ router.put('/me', authenticateToken, async (req, res) => {
         // Récupérer l'utilisateur mis à jour
         const [users] = await db.query(
             `SELECT id, nom_complet, email, telephone, profil, wilaya,
-                    metier, experience, tranche_horaire, salaire_souhaite,
+                    specialite, experience, tranche_horaire, salaire_souhaite,
                     type_remuneration, securite_sociale, disponible,
-                    domaine, registre_commerce, qualification,
-                    type_materiel, marque_materiel, annee_materiel,
-                    type_materiaux, conditionnement_materiaux
+                    registre_commerce, qualification,
+                    marque_materiel, annee_materiel,
+                     conditionnement_materiaux
              FROM utilisateurs 
              WHERE id = ?`,
             [userId]
