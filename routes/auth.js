@@ -73,7 +73,7 @@ router.post('/inscription', [
                marque_materiel, annee_materiel,
                 conditionnement_materiaux,
                 disponible, credits
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 nom_complet, email, telephone, mot_de_passe_hash, profil, wilaya,
                 specialite || null, experience || null, tranche_horaire || null, salaire_souhaite || null,
@@ -93,7 +93,7 @@ router.post('/inscription', [
 
         // Récupérer l'utilisateur créé
         const [newUser] = await db.query(
-            'SELECT id, nom_complet, email, profil, wilaya, metier, experience, tranche_horaire, salaire_souhaite, type_remuneration, securite_sociale, disponible FROM utilisateurs WHERE id = ?',
+            'SELECT id, nom_complet, email, profil, wilaya, specialite, experience, tranche_horaire, salaire_souhaite, type_remuneration, securite_sociale, disponible FROM utilisateurs WHERE id = ?',
             [result.insertId]
         );
 
@@ -228,7 +228,8 @@ router.put('/me', authenticateToken, async (req, res) => {
         'securite_sociale', 'disponible',
         'registre_commerce', 'qualification',
          'marque_materiel', 'annee_materiel',
-         'conditionnement_materiaux'
+         'conditionnement_materiaux',
+        'credits'  // ⭐ AJOUTÉ
     ];
     
     // Construire la requête UPDATE dynamique
@@ -257,7 +258,7 @@ router.put('/me', authenticateToken, async (req, res) => {
             `SELECT id, nom_complet, email, telephone, profil, wilaya,
                     specialite, experience, tranche_horaire, salaire_souhaite,
                     type_remuneration, securite_sociale, disponible,
-                    registre_commerce, qualification,
+                    registre_commerce, qualification, credits,
                     marque_materiel, annee_materiel,
                      conditionnement_materiaux
              FROM utilisateurs 
