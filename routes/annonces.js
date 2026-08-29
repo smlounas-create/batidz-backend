@@ -222,8 +222,14 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
  console.log('🔍 DELETE /annonces/', id);
     console.log('👤 Utilisateur:', req.user);
+   
     try {
-        const [result] = await db.query(
+          await db.query(
+            'DELETE FROM paiements_annonces WHERE annonce_id = ?',
+            [id]
+        );
+
+       const [result] = await db.query(
             'DELETE FROM annonces WHERE id = ? AND utilisateur_id = ?',
             [id, req.user.id]
         );
