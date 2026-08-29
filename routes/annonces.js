@@ -220,7 +220,8 @@ router.get('/:id', async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const db = req.app.get('db');
-
+ console.log('🔍 DELETE /annonces/', id);
+    console.log('👤 Utilisateur:', req.user);
     try {
         const [result] = await db.query(
             'DELETE FROM annonces WHERE id = ? AND utilisateur_id = ?',
