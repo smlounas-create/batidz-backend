@@ -252,6 +252,8 @@ router.put('/:id/statut', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { statut } = req.body;
     const db = req.app.get('db');
+ console.log('🔍 PUT statut - ID:', id, 'Statut:', statut);
+    console.log('👤 Utilisateur:', req.user);
 
     const statutsValides = ['active', 'inactive', 'terminee'];
     if (!statut || !statutsValides.includes(statut)) {
@@ -263,7 +265,7 @@ router.put('/:id/statut', authenticateToken, async (req, res) => {
             'UPDATE annonces SET statut = ? WHERE id = ? AND utilisateur_id = ?',
             [statut, id, req.user.id]
         );
-
+ console.log('📊 Rows affected:', result.affectedRows);
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Annonce non trouvée' });
         }
