@@ -103,6 +103,9 @@ router.get('/:id', authenticateToken, async (req, res) => {
 // MODIFIER UN CHANTIER (PUT)
 // ============================================================
 router.put('/:id', authenticateToken, async (req, res) => {
+   console.log('🔍 PUT /chantiers/:id');
+    console.log('📦 Body reçu:', req.body);
+    console.log('👤 Utilisateur:', req.user);
     const { id } = req.params;
     const { nom, description, wilaya, adresse, date_debut, date_fin_prevue, statut } = req.body;
     const db = req.app.get('db');
