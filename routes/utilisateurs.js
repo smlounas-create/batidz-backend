@@ -153,7 +153,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     try {
         const [users] = await db.query(
             `SELECT id, nom_complet, email, telephone, profil, wilaya,
-                    metier, experience, tranche_horaire, salaire_souhaite,
+                     specialite, experience, tranche_horaire, salaire_souhaite,
                     type_remuneration, securite_sociale, disponible
              FROM utilisateurs 
              WHERE id = ?`,
