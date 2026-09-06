@@ -276,5 +276,79 @@ router.put('/:id/statut', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
+// ============================================================
+// METTRE À JOUR UNE ANNONCE (PUT) - DISPONIBILITÉ
+// ============================================================
+router.put('/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { disponible, statut } = req.body;
+    const db = req.app.get('db');
 
+    console.log('🔍 PUT /annonces/', id);
+    console.log('📦 Body reçu:', req.body);
+    console.log('👤 Utilisateur:', req.user);
+
+    try {
+        // 1️⃣ Vérifier que l'annonce appartient bien à l'utilisateur
+        const [check] = await db.query(
+            'SELECT id, utilisateur_id FROM annonces WHERE id = ?',
+            [id]
+        );
+
+        if (check.length === 0) {
+            return res.status(404).json({ message: 'Annonce non trouvée' });
+        }
+
+        if (check[0].utilisateur_id !== req.user.id) {
+            return res.status(403).json({ message: 'Vous n\'êtes pas autorisé à modifier cette annonce' });
+        }
+
+        // 2️⃣ Construire la requête dynamiquement
+        let updates = [];
+        let values = [];
+
+        if (disponible !== undefined) {
+            updates.push('disponible = ?');
+            values.push(disponible);
+        }
+
+        if (statut !== undefined) {
+            const statutsValides = ['active', 'inactive', 'terminee'];
+            if (!statutsValides.includes(statut)) {
+                return res.status(400).json({ message: 'Statut invalide' });
+            }
+            updates.push('statut = ?');
+            values.push(statut);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'Aucune donnée à mettre à jour' });
+        }
+
+        // 3️⃣ Exécuter la mise à jour
+        values.push(id);
+        const query = `UPDATE annonces SET ${updates.join(', ')} WHERE id = ?`;
+        const [result] = await db.query(query, values);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Annonce non trouvée' });
+        }
+
+        // 4️⃣ Récupérer l'annonce mise à jour
+        const [updated] = await db.query(
+            'SELECT * FROM annonces WHERE id = ?',
+            [id]
+        );
+
+        console.log('✅ Annonce mise à jour:', updated[0]);
+        res.json({
+            message: 'Annonce mise à jour avec succès',
+            annonce: updated[0]
+        });
+
+    } catch (error) {
+        console.error('Erreur PUT /annonces/:id:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
 module.exports = router;
