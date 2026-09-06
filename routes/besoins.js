@@ -85,7 +85,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
     try {
         const [besoin] = await db.query(
-            `SELECT * FROM besoins WHERE id = ?`,
+            `SELECT * FROM besoins_chantier WHERE id = ?`,
             [id]
         );
         if (besoin.length === 0) {
@@ -128,14 +128,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
         // ⭐ Utiliser la table 'besoins'
         values.push(id);
-        const query = `UPDATE besoins SET ${updates.join(', ')} WHERE id = ?`;
+        const query = `UPDATE besoins_chantier  SET ${updates.join(', ')} WHERE id = ?`;
         const [result] = await db.query(query, values);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Besoin non trouvé' });
         }
 
-        const [updated] = await db.query('SELECT * FROM besoins WHERE id = ?', [id]);
+        const [updated] = await db.query('SELECT * FROM besoins_chantier WHERE id = ?', [id]);
         res.json({
             message: 'Besoin mis à jour avec succès',
             besoin: updated[0]
