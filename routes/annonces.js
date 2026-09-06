@@ -289,9 +289,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
     console.log('👤 Utilisateur:', req.user);
 
     try {
-        // 1️⃣ Vérifier que l'annonce appartient bien à l'utilisateur
+        // 1️⃣ Vérifier que l'annonce existe
         const [check] = await db.query(
-            'SELECT id, utilisateur_id FROM annonces WHERE id = ?',
+            'SELECT a.id, a.utilisateur_id, u.profil FROM annonces a JOIN utilisateurs u ON a.utilisateur_id = u.id WHERE a.id = ?',
             [id]
         );
 
@@ -299,15 +299,44 @@ router.put('/:id', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'Annonce non trouvée' });
         }
 
-        if (check[0].utilisateur_id !== req.user.id) {
-            return res.status(403).json({ message: 'Vous n\'êtes pas autorisé à modifier cette annonce' });
+        const annonce = check[0];
+
+        // 2️⃣ Autoriser la modification dans 2 cas :
+        //    - L'utilisateur est le propriétaire de l'annonce
+        //    - L'utilisateur est un entrepreneur (pour engager)
+        const estProprietaire = annonce.utilisateur_id === req.user.id;
+        const estEntrepreneur = req.user.profil === 'entrepreneur';
+
+        // Si on modifie la disponibilité (c'est le cas pour "Engager")
+        if (disponible !== undefined) {
+            // L'entrepreneur PEUT modifier la disponibilité
+            if (!estProprietaire && !estEntrepreneur) {
+                return res.status(403).json({ 
+                    message: 'Seul le propriétaire ou un entrepreneur peut modifier la disponibilité' 
+                });
+            }
+        } 
+        // Si on modifie le statut (seul le propriétaire peut le faire)
+        else if (statut !== undefined) {
+            if (!estProprietaire) {
+                return res.status(403).json({ 
+                    message: 'Seul le propriétaire peut modifier le statut de l\'annonce' 
+                });
+            }
+        } 
+        // Si on essaie de modifier autre chose
+        else {
+            return res.status(400).json({ message: 'Aucune donnée à mettre à jour' });
         }
 
-        // 2️⃣ Construire la requête dynamiquement
+        // 3️⃣ Construire la requête dynamiquement
         let updates = [];
         let values = [];
 
         if (disponible !== undefined) {
+            if (!['oui', 'non'].includes(disponible)) {
+                return res.status(400).json({ message: 'Disponibilité invalide. Utilisez "oui" ou "non"' });
+            }
             updates.push('disponible = ?');
             values.push(disponible);
         }
@@ -325,7 +354,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
             return res.status(400).json({ message: 'Aucune donnée à mettre à jour' });
         }
 
-        // 3️⃣ Exécuter la mise à jour
+        // 4️⃣ Exécuter la mise à jour
         values.push(id);
         const query = `UPDATE annonces SET ${updates.join(', ')} WHERE id = ?`;
         const [result] = await db.query(query, values);
@@ -334,7 +363,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'Annonce non trouvée' });
         }
 
-        // 4️⃣ Récupérer l'annonce mise à jour
+        // 5️⃣ Récupérer l'annonce mise à jour
         const [updated] = await db.query(
             'SELECT * FROM annonces WHERE id = ?',
             [id]
