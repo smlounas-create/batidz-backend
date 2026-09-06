@@ -85,7 +85,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
     try {
         const [besoin] = await db.query(
-            `SELECT * FROM besoins_chantier WHERE id = ?`,
+            `SELECT * FROM besoins WHERE id = ?`,
             [id]
         );
         if (besoin.length === 0) {
