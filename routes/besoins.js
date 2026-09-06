@@ -103,29 +103,49 @@ router.get('/:id', authenticateToken, async (req, res) => {
 // ============================================================
 router.put('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const { categorie, titre, description, quantite, unite, budget_estime, statut } = req.body;
+    const { quantite_trouvee, statut } = req.body;
     const db = req.app.get('db');
 
+    console.log('🔍 PUT /besoins/', id);
+    console.log('📦 Body reçu:', req.body);
+
     try {
-        // ⭐ SUPPRESSION DE date_besoins
-        const [result] = await db.query(
-            `UPDATE besoins_chantier 
-             SET categorie = ?, titre = ?, description = ?, quantite = ?, unite = ?, budget_estime = ?, statut = ?
-             WHERE id = ?`,
-            [categorie, titre, description, quantite, unite, budget_estime, statut, id]
-        );
+        let updates = [];
+        let values = [];
+
+        if (quantite_trouvee !== undefined) {
+            updates.push('quantite_trouvee = ?');
+            values.push(quantite_trouvee);
+        }
+        if (statut !== undefined) {
+            updates.push('statut = ?');
+            values.push(statut);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'Aucune donnée à mettre à jour' });
+        }
+
+        // ⭐ Utiliser la table 'besoins'
+        values.push(id);
+        const query = `UPDATE besoins SET ${updates.join(', ')} WHERE id = ?`;
+        const [result] = await db.query(query, values);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Besoin non trouvé' });
         }
 
-        res.json({ message: 'Besoin modifié avec succès' });
+        const [updated] = await db.query('SELECT * FROM besoins WHERE id = ?', [id]);
+        res.json({
+            message: 'Besoin mis à jour avec succès',
+            besoin: updated[0]
+        });
+
     } catch (error) {
         console.error('Erreur SQL:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
-
 // ============================================================
 // SUPPRIMER UN BESOIN (DELETE)
 // ============================================================
