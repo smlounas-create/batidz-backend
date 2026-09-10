@@ -151,7 +151,7 @@ router.get('/', async (req, res) => {
         }
        
         if (disponible && disponible !== '') {
-            query += ' AND u.disponible = ?';
+            query += ' AND a.disponible = ?';
             params.push(disponible);
         }
 
