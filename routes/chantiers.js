@@ -152,5 +152,55 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
+// ============================================================
+// UPLOADER UNE PHOTO DE CHANTIER (POST)
+// ============================================================
+router.post('/:id/photo', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { photo } = req.body;
+    const db = req.app.get('db');
+
+    console.log('📸 POST /chantiers/' + id + '/photo');
+
+    try {
+        // 1️⃣ Vérifier que le chantier appartient à l'utilisateur
+        const [chantier] = await db.query(
+            'SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?',
+            [id, req.user.id]
+        );
+
+        if (chantier.length === 0) {
+            return res.status(404).json({ message: 'Chantier non trouvé' });
+        }
+
+        // 2️⃣ Vérifier que la photo est fournie
+        if (!photo) {
+            return res.status(400).json({ message: 'Photo manquante' });
+        }
+
+        // 3️⃣ Sauvegarder la photo (base64) dans la colonne 'photo'
+        await db.query(
+            'UPDATE chantiers SET photo = ? WHERE id = ?',
+            [photo, id]
+        );
+
+        // 4️⃣ Récupérer le chantier mis à jour
+        const [updated] = await db.query(
+            'SELECT * FROM chantiers WHERE id = ?',
+            [id]
+        );
+
+        console.log('✅ Photo sauvegardée pour chantier:', id);
+        res.json({
+            message: 'Photo mise à jour avec succès',
+            chantier: updated[0]
+        });
+
+    } catch (error) {
+        console.error('Erreur upload photo chantier:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
 
 module.exports = router;
