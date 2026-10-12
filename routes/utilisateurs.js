@@ -170,5 +170,53 @@ router.get('/:id', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
+// ============================================================
+// UPLOADER UNE PHOTO DE PROFIL (POST)
+// ============================================================
+router.post('/:id/photo', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { photo } = req.body;
+    const db = req.app.get('db');
+
+    console.log('📸 POST /utilisateurs/' + id + '/photo');
+
+    try {
+        // 1️⃣ Vérifier que l'utilisateur modifie bien son propre profil
+        if (parseInt(id) !== req.user.id) {
+            return res.status(403).json({ 
+                message: 'Vous ne pouvez modifier que votre propre photo' 
+            });
+        }
+
+        // 2️⃣ Vérifier que la photo est fournie
+        if (!photo) {
+            return res.status(400).json({ message: 'Photo manquante' });
+        }
+
+        // 3️⃣ Sauvegarder la photo (base64) dans la colonne 'photo'
+        await db.query(
+            'UPDATE utilisateurs SET photo = ? WHERE id = ?',
+            [photo, id]
+        );
+
+        // 4️⃣ Récupérer l'utilisateur mis à jour
+        const [updated] = await db.query(
+            `SELECT id, nom_complet, email, telephone, profil, wilaya, photo
+             FROM utilisateurs WHERE id = ?`,
+            [id]
+        );
+
+        console.log('✅ Photo sauvegardée pour utilisateur:', id);
+        res.json({
+            message: 'Photo mise à jour avec succès',
+            utilisateur: updated[0]
+        });
+
+    } catch (error) {
+        console.error('Erreur upload photo utilisateur:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
 
 module.exports = router;
