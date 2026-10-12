@@ -194,7 +194,7 @@ router.get('/me', authenticateToken, async (req, res) => {
                    specialite,  experience, tranche_horaire, salaire_souhaite,
                     type_remuneration, securite_sociale, disponible,
                     registre_commerce, qualification, credits,
-                     marque_materiel, annee_materiel,
+                     marque_materiel, annee_materiel, photo,
                      conditionnement_materiaux
              FROM utilisateurs 
              WHERE id = ?`,
@@ -259,7 +259,7 @@ router.put('/me', authenticateToken, async (req, res) => {
                     specialite, experience, tranche_horaire, salaire_souhaite,
                     type_remuneration, securite_sociale, disponible,
                     registre_commerce, qualification, credits,
-                    marque_materiel, annee_materiel,
+                    marque_materiel, annee_materiel, photo,
                      conditionnement_materiaux
              FROM utilisateurs 
              WHERE id = ?`,
