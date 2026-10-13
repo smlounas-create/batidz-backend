@@ -32,7 +32,13 @@ router.post('/inscription', [
     body('nom_complet').notEmpty().withMessage('Nom complet requis'),
     body('email').isEmail().withMessage('Email invalide'),
     body('telephone').notEmpty().withMessage('Téléphone requis'),
-    body('mot_de_passe').isLength({ min: 6 }).withMessage('Mot de passe minimum 6 caractères'),
+   body('mot_de_passe')
+        .isLength({ min: 8 })
+        .withMessage('Mot de passe minimum 8 caractères')
+        .matches(/[A-Z]/)
+        .withMessage('Le mot de passe doit contenir au moins 1 majuscule')
+        .matches(/[0-9]/)
+        .withMessage('Le mot de passe doit contenir au moins 1 chiffre'),
     body('profil').isIn(['entrepreneur', 'ouvrier', 'fournisseur_materiel', 'fournisseur_materiaux'])
 ], async (req, res) => {
     const errors = validationResult(req);
