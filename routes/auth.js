@@ -52,7 +52,7 @@ const authenticateToken = (req, res, next) => {
 // ============================================================
 // INSCRIPTION
 // ============================================================
-router.post('/inscription', [
+router.post('/inscription',  inscriptionLimiter,  [
     body('nom_complet').notEmpty().withMessage('Nom complet requis'),
     body('email').isEmail().withMessage('Email invalide'),
     body('telephone').notEmpty().withMessage('Téléphone requis'),
@@ -141,7 +141,7 @@ router.post('/inscription', [
 // ============================================================
 // CONNEXION
 // ============================================================
-router.post('/connexion', [
+router.post('/connexion', loginLimiter,  [
     body('identifiant').notEmpty().withMessage('Email ou téléphone requis'),
     body('mot_de_passe').notEmpty().withMessage('Mot de passe requis')
 ], async (req, res) => {
