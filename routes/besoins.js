@@ -60,6 +60,20 @@ router.get('/chantier/:chantier_id', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
 
     try {
+        // ⭐ 1. Vérifier que le chantier appartient à l'utilisateur
+        const [chantier] = await db.query(
+            'SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?',
+            [chantier_id, req.user.id]
+        );
+
+        if (chantier.length === 0) {
+            console.log('🚫 Accès refusé : chantier', chantier_id, 'appartient à un autre');
+            return res.status(403).json({ 
+                message: 'Vous n\'êtes pas autorisé à voir ce chantier' 
+            });
+        }
+
+        // ⭐ 2. Récupérer les besoins
         const [besoins] = await db.query(
             `SELECT *, 
                     quantite_trouvee, 
