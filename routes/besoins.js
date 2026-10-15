@@ -98,10 +98,15 @@ router.get('/:id', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
 
     try {
+        // ⭐ Vérifier que le besoin appartient à un chantier de l'utilisateur
         const [besoin] = await db.query(
-            `SELECT * FROM besoins_chantier WHERE id = ?`,
-            [id]
+            `SELECT b.* 
+             FROM besoins_chantier b
+             JOIN chantiers c ON b.chantier_id = c.id
+             WHERE b.id = ? AND c.entrepreneur_id = ?`,
+            [id, req.user.id]
         );
+        
         if (besoin.length === 0) {
             return res.status(404).json({ message: 'Besoin non trouvé' });
         }
@@ -111,7 +116,6 @@ router.get('/:id', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
-
 // ============================================================
 // MODIFIER UN BESOIN (PUT)
 // ============================================================
