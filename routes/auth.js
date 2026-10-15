@@ -2,9 +2,33 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
-
+const rateLimit = require('express-rate-limit');   // ⭐ AJOUTER
 const router = express.Router();
+// ============================================================
+// RATE LIMITING (protection anti-brute force)
+// ============================================================
 
+// ⭐ 5 tentatives de connexion par 15 minutes
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,        // 15 minutes
+    max: 5,                           // 5 tentatives max
+    message: {
+        message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.'
+    },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// ⭐ 3 inscriptions par heure
+const inscriptionLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,        // 1 heure
+    max: 3,                           // 3 inscriptions max
+    message: {
+        message: 'Trop d\'inscriptions depuis cette adresse. Réessayez plus tard.'
+    },
+    standardHeaders: true,
+    legacyHeaders: false
+});
 // ============================================================
 // MIDDLEWARE D'AUTHENTIFICATION
 // ============================================================
