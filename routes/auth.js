@@ -175,7 +175,8 @@ router.post('/connexion', [
                 marque_materiel: user.marque_materiel,
                 annee_materiel: user.annee_materiel,
                 conditionnement_materiaux: user.conditionnement_materiaux,
-            credits: user.credits || 0
+            photo: user.photo,
+                credits: user.credits || 0
             }
         });
     } catch (error) {
