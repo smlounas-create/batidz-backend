@@ -13,11 +13,47 @@ const PORT = process.env.PORT || 1000;
 // ============================================================
 // 1. MIDDLEWARE
 // ============================================================
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+// ============================================================
+// CORS - Configuration sécurisée
+// ============================================================
+const corsOptions = {
+    origin: function(origin, callback) {
+        // 1. Pas d'origine = Postman, apps mobiles, curl → autoriser
+        if (!origin) {
+            return callback(null, true);
+        }
+        
+        // 2. Autoriser tout ce qui est localhost / 127.0.0.1 / IP locale (dev)
+        if (origin.includes('localhost') || 
+            origin.includes('127.0.0.1') || 
+            origin.includes('192.168.') ||
+            origin.includes('10.0.') ||
+            origin.includes('172.')) {
+            return callback(null, true);
+        }
+        
+        // 3. Domaines autorisés en production
+        const domainesAutorises = [
+            'https://batidz-backend-github.onrender.com',
+            'https://batidz.netlify.app',
+            'https://batidz.com',
+            'https://www.batidz.com'
+        ];
+        
+        if (domainesAutorises.includes(origin)) {
+            return callback(null, true);
+        }
+        
+        // 4. Bloquer tout le reste
+        console.log('🚫 CORS bloqué pour:', origin);
+        callback(new Error('Non autorisé par CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
-}));
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // ============================================================
