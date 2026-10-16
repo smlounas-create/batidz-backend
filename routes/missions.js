@@ -88,7 +88,20 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     try {
-        // Déterminer le type en fonction de la catégorie du besoin si non fourni
+        // ⭐ 1. Vérifier que le chantier appartient à l'entrepreneur
+        const [chantier] = await db.query(
+            'SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?',
+            [chantier_id, req.user.id]
+        );
+
+        if (chantier.length === 0) {
+            console.log('🚫 Tentative mission sur chantier étranger:', chantier_id, 'par user:', req.user.id);
+            return res.status(403).json({ 
+                message: 'Vous n\'êtes pas autorisé à créer une mission sur ce chantier' 
+            });
+        }
+
+        // ⭐ 2. Déterminer le type
         let typeMission = type || 'ouvrier';
         if (!type) {
             const [besoin] = await db.query(
@@ -101,6 +114,7 @@ router.post('/', authenticateToken, async (req, res) => {
             }
         }
 
+        // ⭐ 3. Insérer la mission
         const [result] = await db.query(
             `INSERT INTO missions 
              (ouvrier_id, chantier_id, entrepreneur_id, besoin_id, type, date_debut, date_fin, statut) 
@@ -125,7 +139,6 @@ router.post('/', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
-
 // ============================================================
 // PUT /api/missions/:id/terminer - Marquer comme terminée
 // ============================================================
