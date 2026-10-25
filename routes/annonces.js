@@ -133,8 +133,18 @@ router.get('/', async (req, res) => {
     const db = req.app.get('db');
 
     try {
-        let query = `
-            SELECT a.*, u.nom_complet, u.profil, u.disponible
+               let query = `
+            SELECT a.*, 
+                   u.nom_complet, 
+                   u.profil, 
+                   u.disponible,
+                   u.specialite,
+                   u.experience,
+                   u.salaire_souhaite,
+                   u.type_remuneration,
+                   u.marque_materiel,
+                   u.annee_materiel,
+                   u.conditionnement_materiaux
             FROM annonces a
             JOIN utilisateurs u ON a.utilisateur_id = u.id
             WHERE a.statut = 'active'
@@ -173,8 +183,18 @@ router.get('/mes-annonces', authenticateToken, async (req, res) => {
     const userId = req.user.id;
 
     try {
-        const [annonces] = await db.query(
-            `SELECT a.*, u.nom_complet, u.profil, u.disponible
+               const [annonces] = await db.query(
+            `SELECT a.*, 
+                    u.nom_complet, 
+                    u.profil, 
+                    u.disponible,
+                    u.specialite,
+                    u.experience,
+                    u.salaire_souhaite,
+                    u.type_remuneration,
+                    u.marque_materiel,
+                    u.annee_materiel,
+                    u.conditionnement_materiaux
              FROM annonces a
              JOIN utilisateurs u ON a.utilisateur_id = u.id
              WHERE a.utilisateur_id = ?
@@ -197,8 +217,18 @@ router.get('/:id', async (req, res) => {
     const db = req.app.get('db');
 
     try {
-        const [annonces] = await db.query(
-            `SELECT a.*, u.nom_complet, u.profil, u.disponible
+              const [annonces] = await db.query(
+            `SELECT a.*, 
+                    u.nom_complet, 
+                    u.profil, 
+                    u.disponible,
+                    u.specialite,
+                    u.experience,
+                    u.salaire_souhaite,
+                    u.type_remuneration,
+                    u.marque_materiel,
+                    u.annee_materiel,
+                    u.conditionnement_materiaux
              FROM annonces a
              JOIN utilisateurs u ON a.utilisateur_id = u.id
              WHERE a.id = ?`,
