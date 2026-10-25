@@ -163,8 +163,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
         console.error('Erreur SQL:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
-});
-// ============================================================
+});// ============================================================
 // SUPPRIMER UN BESOIN (DELETE)
 // ============================================================
 router.delete('/:id', authenticateToken, async (req, res) => {
@@ -172,16 +171,21 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
 
     try {
+        // ⭐ 1. Supprimer d'abord les missions liées à ce besoin
+        await db.query('DELETE FROM missions WHERE besoin_id = ?', [id]);
+        
+        // ⭐ 2. Supprimer le besoin dans la BONNE table (besoins, pas besoins_chantier)
         const [result] = await db.query(
-            `DELETE FROM besoins_chantier WHERE id = ?`,
+            `DELETE FROM besoins WHERE id = ?`,
             [id]
         );
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Besoin non trouvé' });
         }
+        
+        res.json({ message: 'Besoin et missions liées supprimés avec succès' });
 
-        res.json({ message: 'Besoin supprimé avec succès' });
     } catch (error) {
         console.error('Erreur SQL:', error);
         res.status(500).json({ message: 'Erreur serveur' });
