@@ -176,7 +176,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         
         // ⭐ 2. Supprimer le besoin dans la BONNE table (besoins, pas besoins_chantier)
         const [result] = await db.query(
-            `DELETE FROM besoins WHERE id = ?`,
+            `DELETE FROM besoins_chantier WHERE id = ?`,
             [id]
         );
 
