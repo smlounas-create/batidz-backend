@@ -37,6 +37,7 @@ const corsOptions = {
             'https://batidz-backend-github.onrender.com',
             'https://batidz.netlify.app',
             'https://batidz.com',
+              'https://btphdz.netlify.app', // ⭐ TA NOUVELLE URL
             'https://www.batidz.com'
         ];
         
