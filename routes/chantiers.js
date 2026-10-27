@@ -6,7 +6,10 @@ const router = express.Router();
 // CRÉER UN CHANTIER (POST)
 // ============================================================
 router.post('/', authenticateToken, async (req, res) => {
-    const { nom, description, wilaya, adresse, date_debut, date_fin_prevue } = req.body;
+       const { nom, description, wilaya, adresse } = req.body;
+    // ⭐ Sécurité : transformer les dates vides en NULL
+    const date_debut = req.body.date_debut || null;
+    const date_fin_prevue = req.body.date_fin_prevue || null;
     const db = req.app.get('db');
 
     // ⭐ CORRECTION: req.user au lieu de req.utilisateur
@@ -107,7 +110,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
     console.log('📦 Body reçu:', req.body);
     console.log('👤 Utilisateur:', req.user);
     const { id } = req.params;
-    const { nom, description, wilaya, adresse, date_debut, date_fin_prevue, statut } = req.body;
+       const { nom, description, wilaya, adresse, statut } = req.body;
+    // ⭐ Sécurité : transformer les dates vides en NULL
+    const date_debut = req.body.date_debut || null;
+    const date_fin_prevue = req.body.date_fin_prevue || null;
     const db = req.app.get('db');
 
     try {
