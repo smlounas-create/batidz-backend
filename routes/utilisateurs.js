@@ -217,6 +217,92 @@ router.post('/:id/photo', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
+// ============================================================
+// ⭐ NOUVEAU : LISTER LES FOURNISSEURS (Annuaire)
+// ============================================================
+router.get('/', async (req, res) => {
+    const { profil, wilaya, search, limit } = req.query;
+    const db = req.app.get('db');
+    const maxResults = parseInt(limit) || 50;
 
+    try {
+        // ⭐ 1. Construire la requête des fournisseurs
+        let query = `
+            SELECT id, nom_complet, profil, specialite, wilaya, photo
+            FROM utilisateurs
+            WHERE profil IN ('fournisseur_materiel', 'fournisseur_materiaux')
+        `;
+        const params = [];
+
+        if (profil) {
+            query += ' AND profil = ?';
+            params.push(profil);
+        }
+        if (wilaya) {
+            query += ' AND wilaya = ?';
+            params.push(wilaya);
+        }
+        if (search) {
+            query += ' AND nom_complet LIKE ?';
+            params.push(`%${search}%`);
+        }
+
+        query += ' ORDER BY nom_complet ASC LIMIT ?';
+        params.push(maxResults);
+
+        const [fournisseurs] = await db.query(query, params);
+
+        if (fournisseurs.length === 0) {
+            return res.json([]);
+        }
+
+        // ⭐ 2. Récupérer toutes les annonces de ces fournisseurs
+        const ids = fournisseurs.map(f => f.id);
+        const placeholders = ids.map(() => '?').join(',');
+        const [annonces] = await db.query(
+            `SELECT utilisateur_id, titre FROM annonces WHERE utilisateur_id IN (${placeholders})`,
+            ids
+        );
+
+        // ⭐ 3. Grouper les annonces par fournisseur
+        const annoncesParUser = {};
+        annonces.forEach(a => {
+            if (!annoncesParUser[a.utilisateur_id]) annoncesParUser[a.utilisateur_id] = [];
+            annoncesParUser[a.utilisateur_id].push({ titre: a.titre });
+        });
+
+        // ⭐ 4. Construire la réponse : spécialité + annonces
+        const resultats = fournisseurs.map(f => ({
+            ...f,
+            produits: [
+                { titre: f.specialite },  // ⭐ La spécialité est toujours le 1er produit
+                ...(annoncesParUser[f.id] || [])
+            ]
+        }));
+
+        res.json(resultats);
+
+    } catch (error) {
+        console.error('Erreur GET /utilisateurs:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// ⭐ NOUVEAU : COMPTER LES FOURNISSEURS (pour le badge header)
+// ============================================================
+router.get('/count', async (req, res) => {
+    const db = req.app.get('db');
+    try {
+        const [result] = await db.query(
+            `SELECT COUNT(*) as total FROM utilisateurs 
+             WHERE profil IN ('fournisseur_materiel', 'fournisseur_materiaux')`
+        );
+        res.json({ total: result[0].total });
+    } catch (error) {
+        console.error('Erreur GET /utilisateurs/count:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
 
 module.exports = router;
