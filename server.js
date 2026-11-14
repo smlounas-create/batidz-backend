@@ -143,6 +143,9 @@ const utilisateurRoutes = require('./routes/utilisateurs');
 app.use('/api/utilisateurs', utilisateurRoutes);
 const besoinRoutes = require('./routes/besoins');
 app.use('/api/besoins', besoinRoutes);
+// ⭐ Routes des notifications
+const notificationRoutes = require('./routes/notifications');
+app.use('/api/notifications', notificationRoutes);
 
 
 // ============================================================
