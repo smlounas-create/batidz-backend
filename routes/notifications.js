@@ -1,13 +1,14 @@
-// routes/notifications.js
 const express = require('express');
 const router = express.Router();
-const { authentification, asyncHandler } = require('../middleware/auth');
 
-// ⚠️ On récupère la base de données depuis l'application Express
+// ⚠️ On récupère le pool MySQL depuis l'application Express
 const getDb = (req) => req.app.get('db');
 
+// ⚠️ On importe le middleware. Vérifie bien le nom de la fonction exportée dans ton auth.js !
+const { authentification } = require('../middleware/auth'); 
+
 // ============================================================
-// FONCTION UTILITAIRE : CRÉER UNE NOTIFICATION (Exportée)
+// FONCTION UTILITAIRE : CRÉER UNE NOTIFICATION
 // ============================================================
 async function creerNotification(db, utilisateur_id, type, titre, message, lien_page = null, lien_id = null) {
     try {
@@ -26,93 +27,113 @@ async function creerNotification(db, utilisateur_id, type, titre, message, lien_
 // ============================================================
 // GET /api/notifications
 // ============================================================
-router.get('/', authentification, asyncHandler(async (req, res) => {
-    const db = getDb(req);
-    const userId = req.user.id;
-    
-    const [notifs] = await db.query(
-        `SELECT * FROM notifications 
-         WHERE utilisateur_id = ? 
-         ORDER BY date_creation DESC 
-         LIMIT 50`,
-        [userId]
-    );
-    res.json(notifs);
-}));
+router.get('/', authentification, async (req, res) => {
+    try {
+        const db = getDb(req);
+        const userId = req.user.id;
+        
+        const [notifs] = await db.query(
+            `SELECT * FROM notifications 
+             WHERE utilisateur_id = ? 
+             ORDER BY date_creation DESC 
+             LIMIT 50`,
+            [userId]
+        );
+        res.json(notifs);
+    } catch (error) {
+        console.error('Erreur GET /notifications:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
 
 // ============================================================
 // GET /api/notifications/count
 // ============================================================
-router.get('/count', authentification, asyncHandler(async (req, res) => {
-    const db = getDb(req);
-    const userId = req.user.id;
-    
-    const [rows] = await db.query(
-        `SELECT COUNT(*) AS total FROM notifications 
-         WHERE utilisateur_id = ? AND lu = 0`,
-        [userId]
-    );
-    res.json({ total: rows[0].total });
-}));
+router.get('/count', authentification, async (req, res) => {
+    try {
+        const db = getDb(req);
+        const userId = req.user.id;
+        
+        const [rows] = await db.query(
+            `SELECT COUNT(*) AS total FROM notifications 
+             WHERE utilisateur_id = ? AND lu = 0`,
+            [userId]
+        );
+        res.json({ total: rows[0].total });
+    } catch (error) {
+        console.error('Erreur GET /notifications/count:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
 
 // ============================================================
 // PUT /api/notifications/:id/lu
 // ============================================================
-router.put('/:id/lu', authentification, asyncHandler(async (req, res) => {
-    const db = getDb(req);
-    const userId = req.user.id;
-    const notifId = req.params.id;
+router.put('/:id/lu', authentification, async (req, res) => {
+    try {
+        const db = getDb(req);
+        const userId = req.user.id;
+        const notifId = req.params.id;
 
-    const [result] = await db.query(
-        `UPDATE notifications SET lu = 1 
-         WHERE id = ? AND utilisateur_id = ?`,
-        [notifId, userId]
-    );
+        const [result] = await db.query(
+            `UPDATE notifications SET lu = 1 
+             WHERE id = ? AND utilisateur_id = ?`,
+            [notifId, userId]
+        );
 
-    if (result.affectedRows === 0) {
-        return res.status(404).json({ message: 'Notification non trouvée' });
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Notification non trouvée' });
+        }
+        res.json({ message: 'Notification marquée comme lue' });
+    } catch (error) {
+        console.error('Erreur PUT /notifications/:id/lu:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
     }
-
-    res.json({ message: 'Notification marquée comme lue' });
-}));
+});
 
 // ============================================================
 // PUT /api/notifications/tout-lu
 // ============================================================
-router.put('/tout-lu', authentification, asyncHandler(async (req, res) => {
-    const db = getDb(req);
-    const userId = req.user.id;
-    
-    await db.query(
-        `UPDATE notifications SET lu = 1 
-         WHERE utilisateur_id = ? AND lu = 0`,
-        [userId]
-    );
-    res.json({ message: 'Toutes les notifications marquées comme lues' });
-}));
+router.put('/tout-lu', authentification, async (req, res) => {
+    try {
+        const db = getDb(req);
+        const userId = req.user.id;
+        
+        await db.query(
+            `UPDATE notifications SET lu = 1 
+             WHERE utilisateur_id = ? AND lu = 0`,
+            [userId]
+        );
+        res.json({ message: 'Toutes les notifications marquées comme lues' });
+    } catch (error) {
+        console.error('Erreur PUT /notifications/tout-lu:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
 
 // ============================================================
 // DELETE /api/notifications/:id
 // ============================================================
-router.delete('/:id', authentification, asyncHandler(async (req, res) => {
-    const db = getDb(req);
-    const userId = req.user.id;
-    const notifId = req.params.id;
+router.delete('/:id', authentification, async (req, res) => {
+    try {
+        const db = getDb(req);
+        const userId = req.user.id;
+        const notifId = req.params.id;
 
-    const [result] = await db.query(
-        `DELETE FROM notifications WHERE id = ? AND utilisateur_id = ?`,
-        [notifId, userId]
-    );
+        const [result] = await db.query(
+            `DELETE FROM notifications WHERE id = ? AND utilisateur_id = ?`,
+            [notifId, userId]
+        );
 
-    if (result.affectedRows === 0) {
-        return res.status(404).json({ message: 'Notification non trouvée' });
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Notification non trouvée' });
+        }
+        res.json({ message: 'Notification supprimée' });
+    } catch (error) {
+        console.error('Erreur DELETE /notifications/:id:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
     }
+});
 
-    res.json({ message: 'Notification supprimée' });
-}));
-
-// ============================================================
-// EXPORTS
-// ============================================================
 module.exports = router;
 module.exports.creerNotification = creerNotification;
