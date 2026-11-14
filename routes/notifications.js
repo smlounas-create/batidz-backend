@@ -1,18 +1,17 @@
 const express = require('express');
 const router = express.Router();
+const db = require('../config/db'); // ⚠️ Si ça plante ici, utilise la méthode du pool (voir plus bas)
 
-// ⚠️ On récupère le pool MySQL depuis l'application Express
-const getDb = (req) => req.app.get('db');
-
-// ⚠️ On importe le middleware. Vérifie bien le nom de la fonction exportée dans ton auth.js !
-const { authentification } = require('../middleware/auth'); 
+// ⚠️ On importe TON middleware sous son vrai nom
+const authenticateToken = require('../middleware/auth');
 
 // ============================================================
 // FONCTION UTILITAIRE : CRÉER UNE NOTIFICATION
 // ============================================================
-async function creerNotification(db, utilisateur_id, type, titre, message, lien_page = null, lien_id = null) {
+async function creerNotification(utilisateur_id, type, titre, message, lien_page = null, lien_id = null) {
     try {
-        await db.query(
+        const pool = require('../server').pool; // Récupère le pool depuis server.js
+        await pool.query(
             `INSERT INTO notifications (utilisateur_id, type, titre, message, lien_page, lien_id)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [utilisateur_id, type, titre, message, lien_page, lien_id]
@@ -27,12 +26,12 @@ async function creerNotification(db, utilisateur_id, type, titre, message, lien_
 // ============================================================
 // GET /api/notifications
 // ============================================================
-router.get('/', authentification, async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
     try {
-        const db = getDb(req);
+        const pool = req.app.get('db'); // Récupère la BDD depuis l'app Express
         const userId = req.user.id;
         
-        const [notifs] = await db.query(
+        const [notifs] = await pool.query(
             `SELECT * FROM notifications 
              WHERE utilisateur_id = ? 
              ORDER BY date_creation DESC 
@@ -49,12 +48,12 @@ router.get('/', authentification, async (req, res) => {
 // ============================================================
 // GET /api/notifications/count
 // ============================================================
-router.get('/count', authentification, async (req, res) => {
+router.get('/count', authenticateToken, async (req, res) => {
     try {
-        const db = getDb(req);
+        const pool = req.app.get('db');
         const userId = req.user.id;
         
-        const [rows] = await db.query(
+        const [rows] = await pool.query(
             `SELECT COUNT(*) AS total FROM notifications 
              WHERE utilisateur_id = ? AND lu = 0`,
             [userId]
@@ -69,13 +68,13 @@ router.get('/count', authentification, async (req, res) => {
 // ============================================================
 // PUT /api/notifications/:id/lu
 // ============================================================
-router.put('/:id/lu', authentification, async (req, res) => {
+router.put('/:id/lu', authenticateToken, async (req, res) => {
     try {
-        const db = getDb(req);
+        const pool = req.app.get('db');
         const userId = req.user.id;
         const notifId = req.params.id;
 
-        const [result] = await db.query(
+        const [result] = await pool.query(
             `UPDATE notifications SET lu = 1 
              WHERE id = ? AND utilisateur_id = ?`,
             [notifId, userId]
@@ -94,12 +93,12 @@ router.put('/:id/lu', authentification, async (req, res) => {
 // ============================================================
 // PUT /api/notifications/tout-lu
 // ============================================================
-router.put('/tout-lu', authentification, async (req, res) => {
+router.put('/tout-lu', authenticateToken, async (req, res) => {
     try {
-        const db = getDb(req);
+        const pool = req.app.get('db');
         const userId = req.user.id;
         
-        await db.query(
+        await pool.query(
             `UPDATE notifications SET lu = 1 
              WHERE utilisateur_id = ? AND lu = 0`,
             [userId]
@@ -114,13 +113,13 @@ router.put('/tout-lu', authentification, async (req, res) => {
 // ============================================================
 // DELETE /api/notifications/:id
 // ============================================================
-router.delete('/:id', authentification, async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
     try {
-        const db = getDb(req);
+        const pool = req.app.get('db');
         const userId = req.user.id;
         const notifId = req.params.id;
 
-        const [result] = await db.query(
+        const [result] = await pool.query(
             `DELETE FROM notifications WHERE id = ? AND utilisateur_id = ?`,
             [notifId, userId]
         );
