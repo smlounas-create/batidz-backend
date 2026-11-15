@@ -1,10 +1,10 @@
 // ============================================================
 // FICHIER: routes/missions.js
 // ============================================================
-const { creerNotification } = require('./notifications');
 const express = require('express');
 const router = express.Router();
 const authenticateToken = require('../middleware/auth');
+const { creerNotification } = require('./notifications'); // ⭐ Import de la fonction
 
 // ============================================================
 // GET /api/missions/ouvrier - Récupérer les missions d'un ouvrier
@@ -26,7 +26,6 @@ router.get('/ouvrier', authenticateToken, async (req, res) => {
              ORDER BY m.date_debut DESC`,
             [ouvrierId]
         );
-
         res.json(missions);
     } catch (error) {
         console.error('Erreur GET /missions/ouvrier:', error);
@@ -43,20 +42,15 @@ router.get('/chantier/:chantier_id', authenticateToken, async (req, res) => {
     const { statut } = req.query;
 
     try {
-        // ⭐ 1. Vérifier que le chantier appartient à l'utilisateur
         const [chantier] = await db.query(
             'SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?',
             [chantier_id, req.user.id]
         );
 
         if (chantier.length === 0) {
-            console.log('🚫 Accès refusé : chantier', chantier_id, 'appartient à un autre entrepreneur');
-            return res.status(403).json({ 
-                message: 'Vous n\'êtes pas autorisé à voir ce chantier' 
-            });
+            return res.status(403).json({ message: 'Vous n\'êtes pas autorisé à voir ce chantier' });
         }
 
-        // ⭐ 2. Récupérer les missions
         let query = `
             SELECT m.*,
                    u.nom_complet AS ouvrier_nom,
@@ -78,7 +72,6 @@ router.get('/chantier/:chantier_id', authenticateToken, async (req, res) => {
             query += ' AND m.statut = ?';
             params.push(statut);
         }
-
         query += ' ORDER BY m.date_creation DESC';
 
         const [missions] = await db.query(query, params);
@@ -102,20 +95,14 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     try {
-        // ⭐ 1. Vérifier que le chantier appartient à l'entrepreneur
         const [chantier] = await db.query(
             'SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?',
             [chantier_id, req.user.id]
         );
-
         if (chantier.length === 0) {
-            console.log('🚫 Tentative mission sur chantier étranger:', chantier_id, 'par user:', req.user.id);
-            return res.status(403).json({ 
-                message: 'Vous n\'êtes pas autorisé à créer une mission sur ce chantier' 
-            });
+            return res.status(403).json({ message: 'Vous n\'êtes pas autorisé à créer une mission sur ce chantier' });
         }
 
-        // ⭐ 2. Déterminer le type
         let typeMission = type || 'ouvrier';
         if (!type) {
             const [besoin] = await db.query(
@@ -128,13 +115,15 @@ router.post('/', authenticateToken, async (req, res) => {
             }
         }
 
-        // ⭐ 3. Insérer la mission
+        // 1. Création de la mission
         const [result] = await db.query(
             `INSERT INTO missions 
              (ouvrier_id, chantier_id, entrepreneur_id, besoin_id, type, date_debut, date_fin, statut) 
              VALUES (?, ?, ?, ?, ?, ?, ?, 'en_cours')`,
             [ouvrier_id, chantier_id, entrepreneurId, besoin_id, typeMission, date_debut, date_fin || null]
         );
+
+        const missionId = result.insertId; // ⭐ On récupère l'ID de la mission créée
 
         const [newMission] = await db.query(
             `SELECT m.*, 
@@ -144,31 +133,35 @@ router.post('/', authenticateToken, async (req, res) => {
              JOIN chantiers c ON m.chantier_id = c.id
              JOIN utilisateurs u ON m.entrepreneur_id = u.id
              WHERE m.id = ?`,
-            [result.insertId]
+            [missionId]
         );
-// ⭐ Créer la notification pour l'ouvrier
-const db = req.app.get('db');
-// (Récupère les infos pour le message)
-const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [ouvrier_id]);
-const [besoinRows] = await db.query('SELECT titre FROM besoins WHERE id = ?', [besoin_id]);
-const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'Un pro';
-const titreBesoin = besoinRows[0] ? besoinRows[0].titre : 'votre besoin';
 
-await creerNotification(
-    db, 
-    ouvrier_id, 
-    'mission', 
-    '🆕 Nouvelle mission reçue', 
-    `Vous avez été engagé pour "${titreBesoin}".`,
-    'page-ouvrier',
-    missionId // l'ID de la mission qui vient d'être créée
-);
+        // ⭐ 2. Créer la notification pour l'ouvrier (CORRIGÉ)
+        try {
+            const [besoinRows] = await db.query('SELECT titre FROM besoins_chantier WHERE id = ?', [besoin_id]);
+            const titreBesoin = besoinRows[0] ? besoinRows[0].titre : 'votre besoin';
+
+            await creerNotification(
+                db, 
+                ouvrier_id, 
+                'mission', 
+                '🆕 Nouvelle mission reçue', 
+                `Vous avez été engagé pour "${titreBesoin}".`,
+                'page-ouvrier',
+                missionId
+            );
+        } catch (notifError) {
+            console.error('Erreur notification mission:', notifError);
+            // On ne bloque pas la création de la mission si la notif échoue
+        }
+
         res.status(201).json(newMission[0]);
     } catch (error) {
         console.error('Erreur POST /missions:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
+
 // ============================================================
 // PUT /api/missions/:id/terminer - Marquer comme terminée
 // ============================================================
@@ -177,97 +170,62 @@ router.put('/:id/terminer', authenticateToken, async (req, res) => {
     const missionId = req.params.id;
     const entrepreneurId = req.user.id;
 
-    console.log('🔍 PUT /missions/' + missionId + '/terminer');
-
     try {
-        // 1️⃣ Récupérer la mission
         const [missions] = await db.query(
             'SELECT * FROM missions WHERE id = ? AND entrepreneur_id = ?',
             [missionId, entrepreneurId]
         );
 
-        if (missions.length === 0) {
-            return res.status(404).json({ message: 'Mission non trouvée ou non autorisée' });
-        }
-
+        if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée ou non autorisée' });
         const mission = missions[0];
+        if (mission.statut === 'terminee') return res.status(400).json({ message: 'Mission déjà terminée' });
+        if (mission.statut === 'annulee') return res.status(400).json({ message: 'Impossible de terminer une mission annulée' });
 
-        if (mission.statut === 'terminee') {
-            return res.status(400).json({ message: 'Mission déjà terminée' });
-        }
-
-        if (mission.statut === 'annulee') {
-            return res.status(400).json({ message: 'Impossible de terminer une mission annulée' });
-        }
-
-        // 2️⃣ Mettre à jour la mission
+        // 1. Mettre à jour la mission
         const today = new Date().toISOString().split('T')[0];
         await db.query(
             `UPDATE missions SET statut = 'terminee', date_fin = ? WHERE id = ?`,
             [today, missionId]
-// ⭐ Créer la notification pour l'entrepreneur
-const db = req.app.get('db');
-const [missionRows] = await db.query('SELECT entrepreneur_id, ouvrier_id, chantier_id FROM missions WHERE id = ?', [req.params.id]);
-const mission = missionRows[0];
-
-if (mission) {
-    const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [mission.ouvrier_id]);
-    const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'L\'ouvrier';
-
-    await creerNotification(
-        db,
-        mission.entrepreneur_id,
-        'mission_terminee',
-        '✅ Mission terminée',
-        `${nomOuvrier} a terminé sa mission. Vous pouvez le noter et le payer.`,
-        'page-chantier-detail',
-        mission.chantier_id
-    );
-}
         );
-        console.log('✅ Mission passée en "terminee"');
 
-        // 3️⃣ Rendre l'annonce de l'ouvrier disponible
-        //    → chercher l'annonce liée au besoin (même catégorie et même utilisateur)
+        // ⭐ 2. Créer la notification pour l'entrepreneur (CORRIGÉ)
+        try {
+            const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [mission.ouvrier_id]);
+            const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'L\'ouvrier';
+
+            await creerNotification(
+                db,
+                mission.entrepreneur_id,
+                'mission_terminee',
+                '✅ Mission terminée',
+                `${nomOuvrier} a terminé sa mission. Vous pouvez le noter et le payer.`,
+                'page-chantier-detail',
+                mission.chantier_id
+            );
+        } catch (notifError) {
+            console.error('Erreur notification terminer:', notifError);
+        }
+
+        // 3. Rendre l'annonce dispo
         const [besoin] = await db.query(
             'SELECT categorie, quantite, quantite_trouvee FROM besoins_chantier WHERE id = ?',
             [mission.besoin_id]
         );
 
         if (besoin.length > 0) {
-            const cat = besoin[0].categorie;
-
-            // Rendre l'annonce disponible
-            const [annonceResult] = await db.query(
-                `UPDATE annonces 
-                 SET disponible = 'oui', statut = 'active'
-                 WHERE utilisateur_id = ? 
-                   AND categorie = ? 
-                   AND disponible = 'non'
-                 ORDER BY date_creation DESC
-                 LIMIT 1`,
-                [mission.ouvrier_id, cat]
+            await db.query(
+                `UPDATE annonces SET disponible = 'oui', statut = 'active' WHERE utilisateur_id = ? AND categorie = ? AND disponible = 'non' ORDER BY date_creation DESC LIMIT 1`,
+                [mission.ouvrier_id, besoin[0].categorie]
             );
-            console.log('✅ Annonces réactivées:', annonceResult.affectedRows);
 
-            // 4️⃣ Mettre à jour le statut du besoin
             if (besoin[0].quantite_trouvee < besoin[0].quantite) {
-                await db.query(
-                    `UPDATE besoins_chantier SET statut = 'en_attente' WHERE id = ?`,
-                    [mission.besoin_id]
-                );
-                console.log('✅ Besoin repassé en "en_attente" (non satisfait)');
+                await db.query(`UPDATE besoins_chantier SET statut = 'en_attente' WHERE id = ?`, [mission.besoin_id]);
             } else {
-                await db.query(
-                    `UPDATE besoins_chantier SET statut = 'satisfait' WHERE id = ?`,
-                    [mission.besoin_id]
-                );
-                console.log('✅ Besoin reste "satisfait"');
+                await db.query(`UPDATE besoins_chantier SET statut = 'satisfait' WHERE id = ?`, [mission.besoin_id]);
             }
         }
 
         res.json({ message: 'Mission terminée avec succès', mission_id: missionId });
-
     } catch (error) {
         console.error('Erreur PUT /missions/:id/terminer:', error);
         res.status(500).json({ message: 'Erreur serveur' });
@@ -282,31 +240,17 @@ router.put('/:id/annuler', authenticateToken, async (req, res) => {
     const missionId = req.params.id;
     const entrepreneurId = req.user.id;
 
-    console.log('🔍 PUT /missions/' + missionId + '/annuler');
-
     try {
         const [missions] = await db.query(
             'SELECT * FROM missions WHERE id = ? AND entrepreneur_id = ?',
             [missionId, entrepreneurId]
         );
-
-        if (missions.length === 0) {
-            return res.status(404).json({ message: 'Mission non trouvée ou non autorisée' });
-        }
-
+        if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
         const mission = missions[0];
+        if (mission.statut === 'terminee') return res.status(400).json({ message: 'Impossible d\'annuler une mission terminée' });
 
-        if (mission.statut === 'terminee') {
-            return res.status(400).json({ message: 'Impossible d\'annuler une mission terminée' });
-        }
+        await db.query(`UPDATE missions SET statut = 'annulee' WHERE id = ?`, [missionId]);
 
-        // 1️⃣ Annuler la mission
-        await db.query(
-            `UPDATE missions SET statut = 'annulee' WHERE id = ?`,
-            [missionId]
-        );
-
-        // 2️⃣ Décrémenter la quantité trouvée du besoin
         const [besoin] = await db.query(
             'SELECT quantite, quantite_trouvee FROM besoins_chantier WHERE id = ?',
             [mission.besoin_id]
@@ -314,36 +258,20 @@ router.put('/:id/annuler', authenticateToken, async (req, res) => {
 
         if (besoin.length > 0) {
             const nouvelleQte = Math.max(0, (besoin[0].quantite_trouvee || 0) - 1);
-            const nouveauStatut = nouvelleQte >= besoin[0].quantite
-                ? 'satisfait'
-                : (nouvelleQte > 0 ? 'en_cours' : 'en_attente');
-
+            const nouveauStatut = nouvelleQte >= besoin[0].quantite ? 'satisfait' : (nouvelleQte > 0 ? 'en_cours' : 'en_attente');
             await db.query(
                 `UPDATE besoins_chantier SET quantite_trouvee = ?, statut = ? WHERE id = ?`,
                 [nouvelleQte, nouveauStatut, mission.besoin_id]
             );
-
-            // 3️⃣ Rendre l'annonce disponible
-            const [besoinFull] = await db.query(
-                'SELECT categorie FROM besoins_chantier WHERE id = ?',
-                [mission.besoin_id]
-            );
+            const [besoinFull] = await db.query('SELECT categorie FROM besoins_chantier WHERE id = ?', [mission.besoin_id]);
             if (besoinFull.length > 0) {
                 await db.query(
-                    `UPDATE annonces 
-                     SET disponible = 'oui', statut = 'active'
-                     WHERE utilisateur_id = ? 
-                       AND categorie = ? 
-                       AND disponible = 'non'
-                     ORDER BY date_creation DESC
-                     LIMIT 1`,
+                    `UPDATE annonces SET disponible = 'oui', statut = 'active' WHERE utilisateur_id = ? AND categorie = ? AND disponible = 'non' ORDER BY date_creation DESC LIMIT 1`,
                     [mission.ouvrier_id, besoinFull[0].categorie]
                 );
             }
         }
-
         res.json({ message: 'Mission annulée avec succès' });
-
     } catch (error) {
         console.error('Erreur PUT /missions/:id/annuler:', error);
         res.status(500).json({ message: 'Erreur serveur' });
@@ -351,7 +279,7 @@ router.put('/:id/annuler', authenticateToken, async (req, res) => {
 });
 
 // ============================================================
-// PUT /api/missions/:id/noter - Noter une mission (note + commentaire)
+// PUT /api/missions/:id/noter - Noter une mission
 // ============================================================
 router.put('/:id/noter', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
@@ -359,47 +287,39 @@ router.put('/:id/noter', authenticateToken, async (req, res) => {
     const entrepreneurId = req.user.id;
     const { note, commentaire } = req.body;
 
-    if (!note || note < 1 || note > 5) {
-        return res.status(400).json({ message: 'La note doit être comprise entre 1 et 5' });
-    }
+    if (!note || note < 1 || note > 5) return res.status(400).json({ message: 'La note doit être comprise entre 1 et 5' });
 
     try {
-        // Vérifier que c'est bien l'entrepreneur de la mission
         const [missions] = await db.query(
-            'SELECT id, statut FROM missions WHERE id = ? AND entrepreneur_id = ?',
+            'SELECT id, statut, ouvrier_id FROM missions WHERE id = ? AND entrepreneur_id = ?',
             [missionId, entrepreneurId]
         );
-
-        if (missions.length === 0) {
-            return res.status(404).json({ message: 'Mission non trouvée ou non autorisée' });
-        }
+        if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
 
         await db.query(
             `UPDATE missions SET note = ?, commentaire = ? WHERE id = ?`,
             [note, commentaire || null, missionId]
-// ⭐ Créer la notification pour l'ouvrier
-const db = req.app.get('db');
-const [missionRows] = await db.query('SELECT entrepreneur_id, ouvrier_id FROM missions WHERE id = ?', [req.params.id]);
-const mission = missionRows[0];
-
-if (mission) {
-    const [entrepreneurRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [mission.entrepreneur_id]);
-    const nomEntrepreneur = entrepreneurRows[0] ? entrepreneurRows[0].nom_complet : 'L\'entrepreneur';
-    
-    await creerNotification(
-        db,
-        mission.ouvrier_id,
-        'note',
-        `⭐ Nouvelle note reçue : ${note}/5`,
-        `${nomEntrepreneur} vous a laissé un avis.`,
-        'page-ouvrier',
-        mission.id
-    );
-}
         );
 
-        res.json({ message: 'Mission notée avec succès', note, commentaire });
+        // ⭐ 2. Créer la notification pour l'ouvrier (CORRIGÉ)
+        try {
+            const [entrepreneurRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [entrepreneurId]);
+            const nomEntrepreneur = entrepreneurRows[0] ? entrepreneurRows[0].nom_complet : 'L\'entrepreneur';
+            
+            await creerNotification(
+                db,
+                missions[0].ouvrier_id, // On récupère l'id de l'ouvrier dans la mission
+                'note',
+                `⭐ Nouvelle note reçue : ${note}/5`,
+                `${nomEntrepreneur} vous a laissé un avis.`,
+                'page-ouvrier',
+                missionId
+            );
+        } catch (notifError) {
+            console.error('Erreur notification note:', notifError);
+        }
 
+        res.json({ message: 'Mission notée avec succès', note, commentaire });
     } catch (error) {
         console.error('Erreur PUT /missions/:id/noter:', error);
         res.status(500).json({ message: 'Erreur serveur' });
@@ -424,16 +344,8 @@ router.put('/:id/paiement', authenticateToken, async (req, res) => {
             `UPDATE missions SET paiement_pourcentage = ? WHERE id = ? AND entrepreneur_id = ?`,
             [paiement_pourcentage, missionId, entrepreneurId]
         );
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: 'Mission non trouvée ou non autorisée' });
-        }
-
-        res.json({
-            message: 'Pourcentage de paiement mis à jour',
-            paiement_pourcentage
-        });
-
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Mission non trouvée' });
+        res.json({ message: 'Pourcentage mis à jour', paiement_pourcentage });
     } catch (error) {
         console.error('Erreur PUT /missions/:id/paiement:', error);
         res.status(500).json({ message: 'Erreur serveur' });
@@ -449,20 +361,14 @@ router.put('/:id/statut', authenticateToken, async (req, res) => {
     const { statut } = req.body;
 
     const statutsValides = ['en_cours', 'terminee', 'annulee'];
-    if (!statut || !statutsValides.includes(statut)) {
-        return res.status(400).json({ message: 'Statut invalide' });
-    }
+    if (!statut || !statutsValides.includes(statut)) return res.status(400).json({ message: 'Statut invalide' });
 
     try {
         const [result] = await db.query(
             'UPDATE missions SET statut = ? WHERE id = ? AND entrepreneur_id = ?',
             [statut, missionId, req.user.id]
         );
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: 'Mission non trouvée' });
-        }
-
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Mission non trouvée' });
         res.json({ message: 'Statut mis à jour', statut });
     } catch (error) {
         console.error('Erreur PUT /missions/:id/statut:', error);
