@@ -1,7 +1,7 @@
 // ============================================================
 // FICHIER: routes/missions.js
 // ============================================================
-
+const { creerNotification } = require('./notifications');
 const express = require('express');
 const router = express.Router();
 const authenticateToken = require('../middleware/auth');
@@ -146,7 +146,23 @@ router.post('/', authenticateToken, async (req, res) => {
              WHERE m.id = ?`,
             [result.insertId]
         );
+// ⭐ Créer la notification pour l'ouvrier
+const db = req.app.get('db');
+// (Récupère les infos pour le message)
+const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [ouvrier_id]);
+const [besoinRows] = await db.query('SELECT titre FROM besoins WHERE id = ?', [besoin_id]);
+const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'Un pro';
+const titreBesoin = besoinRows[0] ? besoinRows[0].titre : 'votre besoin';
 
+await creerNotification(
+    db, 
+    ouvrier_id, 
+    'mission', 
+    '🆕 Nouvelle mission reçue', 
+    `Vous avez été engagé pour "${titreBesoin}".`,
+    'page-ouvrier',
+    missionId // l'ID de la mission qui vient d'être créée
+);
         res.status(201).json(newMission[0]);
     } catch (error) {
         console.error('Erreur POST /missions:', error);
@@ -189,6 +205,25 @@ router.put('/:id/terminer', authenticateToken, async (req, res) => {
         await db.query(
             `UPDATE missions SET statut = 'terminee', date_fin = ? WHERE id = ?`,
             [today, missionId]
+// ⭐ Créer la notification pour l'entrepreneur
+const db = req.app.get('db');
+const [missionRows] = await db.query('SELECT entrepreneur_id, ouvrier_id, chantier_id FROM missions WHERE id = ?', [req.params.id]);
+const mission = missionRows[0];
+
+if (mission) {
+    const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [mission.ouvrier_id]);
+    const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'L\'ouvrier';
+
+    await creerNotification(
+        db,
+        mission.entrepreneur_id,
+        'mission_terminee',
+        '✅ Mission terminée',
+        `${nomOuvrier} a terminé sa mission. Vous pouvez le noter et le payer.`,
+        'page-chantier-detail',
+        mission.chantier_id
+    );
+}
         );
         console.log('✅ Mission passée en "terminee"');
 
@@ -342,6 +377,25 @@ router.put('/:id/noter', authenticateToken, async (req, res) => {
         await db.query(
             `UPDATE missions SET note = ?, commentaire = ? WHERE id = ?`,
             [note, commentaire || null, missionId]
+// ⭐ Créer la notification pour l'ouvrier
+const db = req.app.get('db');
+const [missionRows] = await db.query('SELECT entrepreneur_id, ouvrier_id FROM missions WHERE id = ?', [req.params.id]);
+const mission = missionRows[0];
+
+if (mission) {
+    const [entrepreneurRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [mission.entrepreneur_id]);
+    const nomEntrepreneur = entrepreneurRows[0] ? entrepreneurRows[0].nom_complet : 'L\'entrepreneur';
+    
+    await creerNotification(
+        db,
+        mission.ouvrier_id,
+        'note',
+        `⭐ Nouvelle note reçue : ${note}/5`,
+        `${nomEntrepreneur} vous a laissé un avis.`,
+        'page-ouvrier',
+        mission.id
+    );
+}
         );
 
         res.json({ message: 'Mission notée avec succès', note, commentaire });
