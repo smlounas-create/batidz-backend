@@ -147,6 +147,8 @@ app.use('/api/besoins', besoinRoutes);
 const notificationRoutes = require('./routes/notifications');
 app.use('/api/notifications', notificationRoutes);
 
+const messageRoutes = require('./routes/messages');
+app.use('/api/messages', messageRoutes);
 
 // ============================================================
 // 4. GESTION DES ERREURS
