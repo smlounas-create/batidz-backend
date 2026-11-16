@@ -103,12 +103,20 @@ router.post('/', authenticateToken, async (req, res) => {
         );
 
         // ⭐ Créer la notification
+             // ⭐ Créer la notification (Version simplifiée pour test)
         try {
-            const [besoinRows] = await db.query('SELECT titre FROM besoins_chantier WHERE id = ?', [besoin_id]);
-            const titreBesoin = besoinRows[0] ? besoinRows[0].titre : 'votre besoin';
-            await creerNotification(db, ouvrier_id, 'mission', '🆕 Nouvelle mission reçue', `Vous avez été engagé pour "${titreBesoin}".`, 'page-ouvrier', missionId);
+            const notifResult = await creerNotification(
+                db, 
+                ouvrier_id, 
+                'mission', 
+                '🆕 Nouvelle mission reçue', 
+                'Vous avez été engagé pour un nouveau besoin.', 
+                'page-ouvrier', 
+                missionId
+            );
+            console.log("✅ Résultat notification:", notifResult);
         } catch (notifError) {
-            console.error('Erreur notification mission:', notifError);
+            console.error('❌ Erreur notification mission:', notifError);
         }
 
         res.status(201).json(newMission[0]);
