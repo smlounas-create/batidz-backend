@@ -8,15 +8,17 @@ const authenticateToken = require('../middleware/auth');
 // FONCTION UTILITAIRE : CRÉER UNE NOTIFICATION
 // ============================================================
 async function creerNotification(db, utilisateur_id, type, titre, message, lien_page = null, lien_id = null) {
+    console.log("🔔 Tentative de création de notification pour l'user :", utilisateur_id);
     try {
         await db.query(
             `INSERT INTO notifications (utilisateur_id, type, titre, message, lien_page, lien_id)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [utilisateur_id, type, titre, message, lien_page, lien_id]
         );
+        console.log("✅ Notification créée avec succès !");
         return true;
     } catch (error) {
-        console.error('Erreur creation notification:', error);
+        console.error('❌ ERREUR CRÉATION NOTIFICATION:', error); // ⭐ On affiche l'erreur en entier
         return false;
     }
 }
