@@ -87,7 +87,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
         const [result] = await db.query(
             `INSERT INTO missions (ouvrier_id, chantier_id, entrepreneur_id, besoin_id, type, date_debut, date_fin, statut) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'en_cours')`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'en_attente_acceptation')`,
             [ouvrier_id, chantier_id, entrepreneurId, besoin_id, typeMission, date_debut, date_fin || null]
         );
 
@@ -125,6 +125,74 @@ router.post('/', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
+// ============================================================
+// PUT /api/missions/:id/accepter - L'ouvrier accepte la mission
+// ============================================================
+router.put('/:id/accepter', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    const missionId = req.params.id;
+    const ouvrierId = req.user.id;
+
+    try {
+        // On vérifie que la mission appartient bien à cet ouvrier
+        const [missions] = await db.query('SELECT * FROM missions WHERE id = ? AND ouvrier_id = ?', [missionId, ouvrierId]);
+        if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
+        
+        if (missions[0].statut !== 'en_attente_acceptation') {
+            return res.status(400).json({ message: 'Cette mission n\'est plus en attente' });
+        }
+
+        // On passe le statut à "en_cours"
+        await db.query(`UPDATE missions SET statut = 'en_cours' WHERE id = ?`, [missionId]);
+
+        // ⭐ On notifie l'entrepreneur
+        const mission = missions[0];
+        try {
+            const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [ouvrierId]);
+            const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'Le pro';
+            await creerNotification(db, mission.entrepreneur_id, 'mission_acceptee', '✅ Mission acceptée', `${nomOuvrier} a accepté votre proposition.`, 'page-chantier-detail', mission.chantier_id);
+        } catch (e) {}
+
+        res.json({ message: 'Mission acceptée avec succès' });
+    } catch (error) {
+        console.error('Erreur PUT /missions/:id/accepter:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// PUT /api/missions/:id/refuser - L'ouvrier refuse la mission
+// ============================================================
+router.put('/:id/refuser', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    const missionId = req.params.id;
+    const ouvrierId = req.user.id;
+
+    try {
+        const [missions] = await db.query('SELECT * FROM missions WHERE id = ? AND ouvrier_id = ?', [missionId, ouvrierId]);
+        if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
+        
+        if (missions[0].statut !== 'en_attente_acceptation') {
+            return res.status(400).json({ message: 'Cette mission n\'est plus en attente' });
+        }
+
+        // On passe le statut à "annulee" (ou "refusee")
+        await db.query(`UPDATE missions SET statut = 'annulee' WHERE id = ?`, [missionId]);
+
+        // ⭐ On notifie l'entrepreneur
+        const mission = missions[0];
+        try {
+            const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [ouvrierId]);
+            const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'Le pro';
+            await creerNotification(db, mission.entrepreneur_id, 'mission_refusee', '❌ Mission refusée', `${nomOuvrier} a refusé votre proposition.`, 'page-chantier-detail', mission.chantier_id);
+        } catch (e) {}
+
+        res.json({ message: 'Mission refusée' });
+    } catch (error) {
+        console.error('Erreur PUT /missions/:id/refuser:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
 
 // ============================================================
 // PUT /api/missions/:id/terminer
@@ -139,6 +207,7 @@ router.put('/:id/terminer', authenticateToken, async (req, res) => {
         if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
         
         const mission = missions[0];
+         if (mission.statut === 'en_attente_acceptation') return res.status(400).json({ message: 'Le pro n\'a pas encore accepté cette mission.' });
         if (mission.statut === 'terminee') return res.status(400).json({ message: 'Déjà terminée' });
         if (mission.statut === 'annulee') return res.status(400).json({ message: 'Mission annulée' });
 
