@@ -3,7 +3,6 @@
 // ============================================================
 
 const express = require('express');
-const mysql = require('mysql2/promise');
 const cors = require('cors');
 require('dotenv').config();
 
@@ -60,26 +59,16 @@ app.use(express.json());
 // ============================================================
 // 2. CONNEXION MySQL (Clever Cloud avec SSL)
 // ============================================================
-const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    port: parseInt(process.env.DB_PORT) || 3306,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-    // ⭐ IMPORTANT: Configuration SSL pour Clever Cloud
-    ssl: {
-        rejectUnauthorized: false  // Nécessaire pour Clever Cloud
-    }
-});
+// ⭐ Une seule réserve de connexions pour tout le serveur : celle de config/database.js
+// (avant : une 2e réserve ici, 10 + 10 connexions pour une base limitée à 5)
+const pool = require('./config/database');
 
 // ⭐ Ajouter la base de données à l'application
 app.set('db', pool);
 
 // ⭐ Tester la connexion au démarrage
-(async function testDbConnection() {
+// ⭐ Si la base est momentanément pleine (ex. pendant un redéploiement), on réessaie au lieu d'arrêter le serveur
+(async function testDbConnection(essai = 1) {
     try {
         const connection = await pool.getConnection();
         console.log('✅ MySQL connecté avec succès');
@@ -87,7 +76,11 @@ app.set('db', pool);
         console.log(`🌐 Hôte: ${process.env.DB_HOST}`);
         connection.release();
     } catch (error) {
-        console.error('❌ Erreur de connexion MySQL:', error.message);
+        console.error(`❌ Erreur de connexion MySQL (essai ${essai}/5) :`, error.message);
+        if (essai < 5) {
+            setTimeout(() => testDbConnection(essai + 1), 10000);
+            return;
+        }
         console.error('   Vérifiez vos variables d\'environnement:');
         console.error('   DB_HOST, DB_USER, DB_PASSWORD, DB_NAME');
         process.exit(1);
@@ -107,9 +100,7 @@ app.get('/health', (req, res) => {
     res.json({ 
         status: 'OK', 
         timestamp: new Date().toISOString(),
-        database: 'MySQL (Clever Cloud)',
-        db_host: process.env.DB_HOST,
-        db_name: process.env.DB_NAME
+        database: 'MySQL (Clever Cloud)'
     });
 });
 

@@ -1,0 +1,12 @@
+# Secrets : ne jamais envoyer sur GitHub
+.env
+.env.*
+!.env.example
+
+# Dépendances (Render les réinstalle avec npm install)
+node_modules/
+
+# Journaux et fichiers système
+npm-debug.log*
+Thumbs.db
+.DS_Store
