@@ -16,6 +16,7 @@ const pool = mysql.createPool({
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'batidz',
     port: parseInt(process.env.DB_PORT, 10) || 3306,
+    charset: 'utf8mb4',     // ⭐ arabe et emojis enregistrés correctement
     waitForConnections: true,
     connectionLimit: 3,     // ⭐ 3 sur 5 : il en reste pour phpMyAdmin et les redéploiements Render
     maxIdle: 1,             // ⭐ une seule connexion gardée ouverte quand le site est calme

@@ -54,7 +54,9 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
+// ⭐ Les photos sont envoyées en texte (base64) : jusqu'à ~7 Mo pour une photo de 5 Mo.
+// La limite par défaut d'Express (100 Ko) refusait presque toutes les photos.
+app.use(express.json({ limit: '10mb' }));
 
 // ============================================================
 // 2. CONNEXION MySQL (Clever Cloud avec SSL)
