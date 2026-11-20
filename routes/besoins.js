@@ -1,5 +1,6 @@
 const express = require('express');
 const authenticateToken = require('../middleware/auth');
+const { creerNotification } = require('./notifications');
 const router = express.Router();
 
 // ⭐ Vérifie que le besoin appartient à un chantier de l'utilisateur connecté
@@ -85,10 +86,7 @@ router.get('/chantier/:chantier_id', authenticateToken, async (req, res) => {
 
         // ⭐ 2. Récupérer les besoins
         const [besoins] = await db.query(
-            `SELECT *, 
-                    quantite_trouvee, 
-                    (quantite - quantite_trouvee) AS besoin_restant
-             FROM besoins_chantier 
+            `SELECT * FROM besoins_chantier
              WHERE chantier_id = ?
              ORDER BY id DESC`,
             [chantier_id]
@@ -194,7 +192,30 @@ router.delete('/:id', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'Besoin non trouvé' });
         }
 
-        // ⭐ 1. Supprimer d'abord les missions liées à ce besoin
+        // ⭐ Un besoin entamé (mission en cours ou terminée) ne se supprime pas :
+        // on garderait sinon un chantier sans historique et des professionnels sans leurs notes.
+        const [entamees] = await db.query(
+            `SELECT COUNT(*) AS nb FROM missions WHERE besoin_id = ? AND statut IN ('en_cours', 'terminee')`,
+            [id]
+        );
+        if (entamees[0].nb > 0) {
+            return res.status(409).json({ message: 'Ce besoin a déjà des missions en cours ou terminées : il ne peut pas être supprimé' });
+        }
+
+        // ⭐ Prévenir les professionnels dont la mission en attente va disparaître
+        const [enAttente] = await db.query(
+            `SELECT id, ouvrier_id FROM missions WHERE besoin_id = ? AND statut = 'en_attente_acceptation'`,
+            [id]
+        );
+        for (const m of enAttente) {
+            try {
+                await creerNotification(db, m.ouvrier_id, 'mission_annulee', '❌ Mission annulée', 'L\'entrepreneur a retiré ce besoin.', 'page-ouvrier', m.id);
+            } catch (e) {
+                console.error('Erreur notification suppression besoin:', e);
+            }
+        }
+
+        // ⭐ 1. Supprimer les missions restantes (en attente ou annulées)
         await db.query('DELETE FROM missions WHERE besoin_id = ?', [id]);
         
         // ⭐ 2. Supprimer le besoin
