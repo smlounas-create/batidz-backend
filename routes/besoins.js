@@ -2,6 +2,16 @@ const express = require('express');
 const authenticateToken = require('../middleware/auth');
 const router = express.Router();
 
+// ⭐ Vérifie que le besoin appartient à un chantier de l'utilisateur connecté
+async function besoinDeLUtilisateur(db, besoinId, userId) {
+    const [rows] = await db.query(
+        `SELECT b.id FROM besoins_chantier b JOIN chantiers c ON b.chantier_id = c.id
+         WHERE b.id = ? AND c.entrepreneur_id = ?`,
+        [besoinId, userId]
+    );
+    return rows.length > 0;
+}
+
 // ============================================================
 // AJOUTER UN BESOIN (POST)
 // ============================================================
@@ -128,6 +138,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
     console.log('📦 Body reçu:', req.body);
 
     try {
+        // ⭐ SÉCURITÉ : seul l'entrepreneur propriétaire du chantier peut toucher à ce besoin
+        if (!(await besoinDeLUtilisateur(db, id, req.user.id))) {
+            return res.status(404).json({ message: 'Besoin non trouvé' });
+        }
+
+        if (statut !== undefined && !['en_attente', 'en_cours', 'satisfait'].includes(statut)) {
+            return res.status(400).json({ message: 'Statut invalide' });
+        }
+
         let updates = [];
         let values = [];
 
@@ -144,7 +163,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
             return res.status(400).json({ message: 'Aucune donnée à mettre à jour' });
         }
 
-        // ⭐ Utiliser la table 'besoins'
         values.push(id);
         const query = `UPDATE besoins_chantier  SET ${updates.join(', ')} WHERE id = ?`;
         const [result] = await db.query(query, values);
@@ -171,10 +189,15 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
 
     try {
+        // ⭐ SÉCURITÉ : seul l'entrepreneur propriétaire du chantier peut toucher à ce besoin
+        if (!(await besoinDeLUtilisateur(db, id, req.user.id))) {
+            return res.status(404).json({ message: 'Besoin non trouvé' });
+        }
+
         // ⭐ 1. Supprimer d'abord les missions liées à ce besoin
         await db.query('DELETE FROM missions WHERE besoin_id = ?', [id]);
         
-        // ⭐ 2. Supprimer le besoin dans la BONNE table (besoins, pas besoins_chantier)
+        // ⭐ 2. Supprimer le besoin
         const [result] = await db.query(
             `DELETE FROM besoins_chantier WHERE id = ?`,
             [id]
@@ -201,6 +224,11 @@ router.put('/:id/progression', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
 
     try {
+        // ⭐ SÉCURITÉ : seul l'entrepreneur propriétaire du chantier peut toucher à ce besoin
+        if (!(await besoinDeLUtilisateur(db, id, req.user.id))) {
+            return res.status(404).json({ message: 'Besoin non trouvé' });
+        }
+
         await db.query(
             `UPDATE besoins_chantier SET quantite_trouvee = ? WHERE id = ?`,
             [quantite_trouvee, id]
@@ -216,7 +244,7 @@ router.put('/:id/progression', authenticateToken, async (req, res) => {
                 `UPDATE besoins_chantier SET statut = 'satisfait' WHERE id = ?`,
                 [id]
             );
-        } else if (besoin[0].quantite_trouvee > 0) {
+        } else if (besoin.length > 0 && besoin[0].quantite_trouvee > 0) {
             await db.query(
                 `UPDATE besoins_chantier SET statut = 'en_cours' WHERE id = ?`,
                 [id]
@@ -238,6 +266,11 @@ router.put('/:id/valider', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
 
     try {
+        // ⭐ SÉCURITÉ : seul l'entrepreneur propriétaire du chantier peut toucher à ce besoin
+        if (!(await besoinDeLUtilisateur(db, id, req.user.id))) {
+            return res.status(404).json({ message: 'Besoin non trouvé' });
+        }
+
         const [besoin] = await db.query(
             `SELECT quantite FROM besoins_chantier WHERE id = ?`,
             [id]
