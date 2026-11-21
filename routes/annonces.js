@@ -162,6 +162,12 @@ router.get('/', async (req, res) => {
         // ⭐ Seules les annonces « active » sont montrées : désactiver une annonce la retire des recherches.
         // (La colonne « disponible » n'est plus utilisée.)
 
+        // ⭐ Un ouvrier qui a une mission en cours est « en mission » : son annonce n'apparaît plus
+        //    jusqu'à ce que la mission soit terminée ou annulée. Les fournisseurs ne sont pas concernés.
+        query += ` AND NOT (a.categorie = 'main_oeuvre' AND EXISTS (
+                       SELECT 1 FROM missions m
+                       WHERE m.ouvrier_id = a.utilisateur_id AND m.statut = 'en_cours' AND m.type = 'ouvrier'))`;
+
         query += ' ORDER BY a.date_creation DESC LIMIT 50';
 
         const [annonces] = await db.query(query, params);

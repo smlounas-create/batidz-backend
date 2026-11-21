@@ -146,6 +146,19 @@ router.post('/', authenticateToken, async (req, res) => {
             typeMission = map[besoin[0].categorie] || 'ouvrier';
         }
 
+        // ⭐ Un ouvrier ne peut être que sur un chantier à la fois : s'il a déjà une mission
+        //    en cours, on ne peut pas l'engager ailleurs (il redevient libre quand elle est
+        //    terminée ou annulée). Les fournisseurs, eux, servent plusieurs chantiers.
+        if (typeMission === 'ouvrier') {
+            const [enMission] = await db.query(
+                `SELECT id FROM missions WHERE ouvrier_id = ? AND statut = 'en_cours' AND type = 'ouvrier' LIMIT 1`,
+                [ouvrier_id]
+            );
+            if (enMission.length > 0) {
+                return res.status(409).json({ message: 'Cet ouvrier est déjà en mission' });
+            }
+        }
+
         // ⭐ Quantité demandée à ce professionnel : 1 pour un ouvrier ; pour le matériel et les matériaux,
         //    ce que l'entrepreneur a indiqué (entre 1 et la quantité totale du besoin).
         let quantiteMission = 1;
@@ -213,6 +226,18 @@ router.put('/:id/accepter', authenticateToken, async (req, res) => {
             return res.status(400).json({ message: 'Cette mission n\'est plus en attente' });
         }
 
+        // ⭐ Un ouvrier ne peut pas accepter une 2e mission tant que la première est en cours
+        const estOuvrier = missions[0].type === 'ouvrier';
+        if (estOuvrier) {
+            const [enMission] = await db.query(
+                `SELECT id FROM missions WHERE ouvrier_id = ? AND statut = 'en_cours' AND type = 'ouvrier' AND id <> ? LIMIT 1`,
+                [ouvrierId, missionId]
+            );
+            if (enMission.length > 0) {
+                return res.status(409).json({ message: 'Vous avez déjà une mission en cours' });
+            }
+        }
+
         // On passe le statut à "en_cours"
         await db.query(`UPDATE missions SET statut = 'en_cours' WHERE id = ?`, [missionId]);
         // ⭐ Le professionnel a accepté : le besoin compte une personne / un équipement trouvé de plus
@@ -225,6 +250,27 @@ router.put('/:id/accepter', authenticateToken, async (req, res) => {
             const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'Le pro';
             await creerNotification(db, mission.entrepreneur_id, 'mission_acceptee', '✅ Mission acceptée', `${nomOuvrier} a accepté votre proposition.`, 'page-chantier-detail', missionId);   // ⭐ n° de la mission (avant : du chantier)
         } catch (e) {}
+
+        // ⭐ L'ouvrier est maintenant « en mission » : ses autres propositions en attente sont annulées
+        //    et les entrepreneurs concernés sont prévenus (ils n'attendent pas une réponse qui ne viendra pas).
+        if (estOuvrier) {
+            try {
+                const [autres] = await db.query(
+                    `SELECT id, entrepreneur_id FROM missions WHERE ouvrier_id = ? AND statut = 'en_attente_acceptation' AND type = 'ouvrier' AND id <> ?`,
+                    [ouvrierId, missionId]
+                );
+                if (autres.length > 0) {
+                    const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [ouvrierId]);
+                    const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'L\'ouvrier';
+                    for (const autre of autres) {
+                        await db.query(`UPDATE missions SET statut = 'annulee' WHERE id = ?`, [autre.id]);
+                        await creerNotification(db, autre.entrepreneur_id, 'mission_refusee', '❌ Ouvrier indisponible', `${nomOuvrier} a accepté une autre mission et n'est plus disponible.`, 'page-chantier-detail', autre.id);
+                    }
+                }
+            } catch (e) {
+                console.error('Erreur annulation des autres propositions:', e);
+            }
+        }
 
         res.json({ message: 'Mission acceptée avec succès' });
     } catch (error) {
