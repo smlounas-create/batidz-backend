@@ -8,12 +8,20 @@ const { creerNotification } = require('./notifications');
 
 // ⭐ Ajuste la quantité trouvée d'un besoin (+1, -1 ou 0) et recalcule son statut.
 // Avant : rien n'augmentait jamais quantite_trouvee, donc un besoin ne passait jamais « satisfait ».
-async function mettreAJourBesoin(db, besoinId, delta) {
+// ⭐ Recalcule la quantité trouvée d'un besoin à partir de ses missions acceptées ou terminées.
+//    Chaque mission apporte SA quantité (1 ouvrier, 2 compresseurs, 60 m² de carrelage...).
+//    (Avant : +1 / -1 par mission, d'où « 1/60 » pour 60 m² livrés par un seul fournisseur.)
+//    Le 3e paramètre n'est plus utilisé ; il est gardé pour ne pas toucher aux appels.
+async function mettreAJourBesoin(db, besoinId, _delta) {
     if (!besoinId) return;
-    const [rows] = await db.query('SELECT quantite, quantite_trouvee FROM besoins_chantier WHERE id = ?', [besoinId]);
+    const [rows] = await db.query('SELECT quantite FROM besoins_chantier WHERE id = ?', [besoinId]);
     if (rows.length === 0) return;
     const quantite = rows[0].quantite || 1;
-    const trouvee = Math.max(0, (rows[0].quantite_trouvee || 0) + delta);
+    const [somme] = await db.query(
+        `SELECT COALESCE(SUM(quantite), 0) AS total FROM missions WHERE besoin_id = ? AND statut IN ('en_cours', 'terminee')`,
+        [besoinId]
+    );
+    const trouvee = Math.min(quantite, Number(somme[0].total) || 0);
     const statut = trouvee >= quantite ? 'satisfait' : (trouvee > 0 ? 'en_cours' : 'en_attente');
     await db.query('UPDATE besoins_chantier SET quantite_trouvee = ?, statut = ? WHERE id = ?', [trouvee, statut, besoinId]);
 }
@@ -26,10 +34,12 @@ router.get('/ouvrier', authenticateToken, async (req, res) => {
     const ouvrierId = req.user.id;
     try {
         const [missions] = await db.query(
-            `SELECT m.*, c.nom as chantier_nom, c.wilaya, u.nom_complet as entrepreneur_nom
+            `SELECT m.*, c.nom as chantier_nom, c.wilaya, u.nom_complet as entrepreneur_nom,
+                    b.titre AS besoin_titre, b.categorie AS besoin_categorie, b.unite AS besoin_unite
              FROM missions m
              JOIN chantiers c ON m.chantier_id = c.id
              JOIN utilisateurs u ON m.entrepreneur_id = u.id
+             LEFT JOIN besoins_chantier b ON m.besoin_id = b.id
              WHERE m.ouvrier_id = ? ORDER BY m.date_debut DESC`,
             [ouvrierId]
         );
@@ -52,7 +62,7 @@ router.get('/chantier/:chantier_id', authenticateToken, async (req, res) => {
         if (chantier.length === 0) return res.status(403).json({ message: 'Non autorisé' });
 
         let query = `
-            SELECT m.*, u.nom_complet AS ouvrier_nom, u.telephone AS ouvrier_telephone, u.email AS ouvrier_email, u.profil AS ouvrier_profil, c.nom AS chantier_nom, b.titre AS besoin_titre, b.categorie AS besoin_categorie
+            SELECT m.*, u.nom_complet AS ouvrier_nom, u.telephone AS ouvrier_telephone, u.email AS ouvrier_email, u.profil AS ouvrier_profil, c.nom AS chantier_nom, b.titre AS besoin_titre, b.categorie AS besoin_categorie, b.unite AS besoin_unite
             FROM missions m
             JOIN utilisateurs u ON m.ouvrier_id = u.id
             JOIN chantiers c ON m.chantier_id = c.id
@@ -104,7 +114,7 @@ router.get('/:id', authenticateToken, async (req, res, next) => {
 router.post('/', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
     const entrepreneurId = req.user.id;
-    const { ouvrier_id, chantier_id, besoin_id, date_debut, date_fin, type } = req.body;
+    const { ouvrier_id, chantier_id, besoin_id, date_debut, date_fin, type, quantite } = req.body;
 
     if (!ouvrier_id || !chantier_id || !besoin_id || !date_debut) {
         return res.status(400).json({ message: 'Champs obligatoires manquants' });
@@ -129,19 +139,28 @@ router.post('/', authenticateToken, async (req, res) => {
             return res.status(409).json({ message: 'Ce professionnel est déjà engagé pour ce besoin' });
         }
 
+        const [besoin] = await db.query('SELECT categorie, quantite FROM besoins_chantier WHERE id = ?', [besoin_id]);
         let typeMission = type || 'ouvrier';
-        if (!type) {
-            const [besoin] = await db.query('SELECT categorie FROM besoins_chantier WHERE id = ?', [besoin_id]);
-            if (besoin.length > 0) {
-                const map = { 'main_oeuvre': 'ouvrier', 'materiel': 'materiel', 'materiaux': 'materiaux' };
-                typeMission = map[besoin[0].categorie] || 'ouvrier';
+        if (!type && besoin.length > 0) {
+            const map = { 'main_oeuvre': 'ouvrier', 'materiel': 'materiel', 'materiaux': 'materiaux' };
+            typeMission = map[besoin[0].categorie] || 'ouvrier';
+        }
+
+        // ⭐ Quantité demandée à ce professionnel : 1 pour un ouvrier ; pour le matériel et les matériaux,
+        //    ce que l'entrepreneur a indiqué (entre 1 et la quantité totale du besoin).
+        let quantiteMission = 1;
+        if (besoin.length > 0 && besoin[0].categorie !== 'main_oeuvre' && quantite !== undefined && quantite !== null && quantite !== '') {
+            quantiteMission = Number(quantite);
+            const maximum = besoin[0].quantite || 1;
+            if (!Number.isInteger(quantiteMission) || quantiteMission < 1 || quantiteMission > maximum) {
+                return res.status(400).json({ message: 'Quantité invalide pour ce besoin' });
             }
         }
 
         const [result] = await db.query(
-            `INSERT INTO missions (ouvrier_id, chantier_id, entrepreneur_id, besoin_id, type, date_debut, date_fin, statut) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'en_attente_acceptation')`,
-            [ouvrier_id, chantier_id, entrepreneurId, besoin_id, typeMission, date_debut, date_fin || null]
+            `INSERT INTO missions (ouvrier_id, chantier_id, entrepreneur_id, besoin_id, type, date_debut, date_fin, statut, quantite) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'en_attente_acceptation', ?)`,
+            [ouvrier_id, chantier_id, entrepreneurId, besoin_id, typeMission, date_debut, date_fin || null, quantiteMission]
         );
 
         const missionId = result.insertId;
