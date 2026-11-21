@@ -75,6 +75,30 @@ router.get('/chantier/:chantier_id', authenticateToken, async (req, res) => {
 });
 
 // ============================================================
+// GET /api/missions/:id - Une mission (pour retrouver son chantier depuis une notification)
+// ============================================================
+router.get('/:id', authenticateToken, async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id)) return next();
+    const db = req.app.get('db');
+    try {
+        // ⭐ Seuls l'entrepreneur et le professionnel de la mission y ont accès
+        // (entrepreneur, professionnel et nom du professionnel : la page vérifie ainsi
+        //  qu'une notification correspond bien à cette mission)
+        const [missions] = await db.query(
+            `SELECT m.id, m.chantier_id, m.statut, m.entrepreneur_id, m.ouvrier_id, u.nom_complet AS ouvrier_nom
+             FROM missions m LEFT JOIN utilisateurs u ON u.id = m.ouvrier_id
+             WHERE m.id = ? AND (m.entrepreneur_id = ? OR m.ouvrier_id = ?)`,
+            [req.params.id, req.user.id, req.user.id]
+        );
+        if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
+        res.json(missions[0]);
+    } catch (error) {
+        console.error('Erreur GET /missions/:id:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
 // POST /api/missions - Créer une mission
 // ============================================================
 router.post('/', authenticateToken, async (req, res) => {
@@ -180,7 +204,7 @@ router.put('/:id/accepter', authenticateToken, async (req, res) => {
         try {
             const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [ouvrierId]);
             const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'Le pro';
-            await creerNotification(db, mission.entrepreneur_id, 'mission_acceptee', '✅ Mission acceptée', `${nomOuvrier} a accepté votre proposition.`, 'page-chantier-detail', mission.chantier_id);
+            await creerNotification(db, mission.entrepreneur_id, 'mission_acceptee', '✅ Mission acceptée', `${nomOuvrier} a accepté votre proposition.`, 'page-chantier-detail', missionId);   // ⭐ n° de la mission (avant : du chantier)
         } catch (e) {}
 
         res.json({ message: 'Mission acceptée avec succès' });
@@ -214,7 +238,7 @@ router.put('/:id/refuser', authenticateToken, async (req, res) => {
         try {
             const [ouvrierRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [ouvrierId]);
             const nomOuvrier = ouvrierRows[0] ? ouvrierRows[0].nom_complet : 'Le pro';
-            await creerNotification(db, mission.entrepreneur_id, 'mission_refusee', '❌ Mission refusée', `${nomOuvrier} a refusé votre proposition.`, 'page-chantier-detail', mission.chantier_id);
+            await creerNotification(db, mission.entrepreneur_id, 'mission_refusee', '❌ Mission refusée', `${nomOuvrier} a refusé votre proposition.`, 'page-chantier-detail', missionId);   // ⭐ n° de la mission (avant : du chantier)
         } catch (e) {}
 
         res.json({ message: 'Mission refusée' });
