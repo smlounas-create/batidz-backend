@@ -102,8 +102,8 @@ router.post('/inscription',  inscriptionLimiter,  [
                 registre_commerce, qualification,
                marque_materiel, annee_materiel,
                 conditionnement_materiaux,
-                disponible, credits
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                credits
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 nom_complet, email, telephone, mot_de_passe_hash, profil, wilaya,
                 specialite || null, experience || null, tranche_horaire || null, salaire_souhaite || null,
@@ -111,7 +111,7 @@ router.post('/inscription',  inscriptionLimiter,  [
                  registre_commerce || null, qualification || null,
                 marque_materiel || null, annee_materiel || null,
                  conditionnement_materiaux || null,
-                'oui' , 5  // ⭐ 5 crédits offert
+                5  // ⭐ 5 crédits offert
             ]
         );
 
@@ -123,7 +123,7 @@ router.post('/inscription',  inscriptionLimiter,  [
 
         // Récupérer l'utilisateur créé
         const [newUser] = await db.query(
-            'SELECT id, nom_complet, email, profil, wilaya, specialite, experience, tranche_horaire, salaire_souhaite, type_remuneration, securite_sociale, disponible FROM utilisateurs WHERE id = ?',
+            'SELECT id, nom_complet, email, profil, wilaya, specialite, experience, tranche_horaire, salaire_souhaite, type_remuneration, securite_sociale FROM utilisateurs WHERE id = ?',
             [result.insertId]
         );
 
@@ -191,7 +191,6 @@ router.post('/connexion', loginLimiter,  [
                 salaire_souhaite: user.salaire_souhaite,
                 type_remuneration: user.type_remuneration,
                 securite_sociale: user.securite_sociale,
-                disponible: user.disponible || 'oui',
               
                 registre_commerce: user.registre_commerce,
                 qualification: user.qualification,
@@ -223,7 +222,7 @@ router.get('/me', authenticateToken, async (req, res) => {
         const [users] = await db.query(
             `SELECT id, nom_complet, email, telephone, profil, wilaya,
                    specialite,  experience, tranche_horaire, salaire_souhaite,
-                    type_remuneration, securite_sociale, disponible,
+                    type_remuneration, securite_sociale,
                     registre_commerce, qualification, credits,
                      marque_materiel, annee_materiel, photo,
                      conditionnement_materiaux
@@ -256,11 +255,12 @@ router.put('/me', authenticateToken, async (req, res) => {
         'nom_complet', 'email', 'telephone', 'wilaya',
         'specialite',  'experience', 'tranche_horaire',
         'salaire_souhaite', 'type_remuneration',
-        'securite_sociale', 'disponible',
+        'securite_sociale',
         'registre_commerce', 'qualification',
          'marque_materiel', 'annee_materiel',
-         'conditionnement_materiaux',
-        'credits'  // ⭐ AJOUTÉ
+         'conditionnement_materiaux'
+        // ⭐ « credits » retiré : chacun pouvait s'attribuer autant de crédits qu'il voulait.
+        //    Les crédits ne changent que par le serveur (publication d'une annonce, paiement).
     ];
     
     // Construire la requête UPDATE dynamique
@@ -288,7 +288,7 @@ router.put('/me', authenticateToken, async (req, res) => {
         const [users] = await db.query(
             `SELECT id, nom_complet, email, telephone, profil, wilaya,
                     specialite, experience, tranche_horaire, salaire_souhaite,
-                    type_remuneration, securite_sociale, disponible,
+                    type_remuneration, securite_sociale,
                     registre_commerce, qualification, credits,
                     marque_materiel, annee_materiel, photo,
                      conditionnement_materiaux
@@ -304,44 +304,10 @@ router.put('/me', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Erreur PUT /me:', error);
         res.status(500).json({ message: 'Erreur serveur' });
-    }
-});
 
-// ============================================================
-// 3. PUT /api/auth/disponibilite - Mettre à jour la disponibilité
-// ============================================================
-router.put('/disponibilite', authenticateToken, async (req, res) => {
-    const db = req.app.get('db');
-    const userId = req.user.id;
-    const { disponible } = req.body;
-    
-    if (!disponible || !['oui', 'non'].includes(disponible)) {
-        return res.status(400).json({
-            message: 'La disponibilité doit être "oui" ou "non"'
-        });
     }
     
-    try {
-        await db.query(
-            'UPDATE utilisateurs SET disponible = ? WHERE id = ?',
-            [disponible, userId]
-        );
-        
-        const [users] = await db.query(
-            'SELECT id, disponible FROM utilisateurs WHERE id = ?',
-            [userId]
-        );
-        
-        res.json({
-            message: 'Disponibilité mise à jour',
-            disponible: users[0].disponible
-        });
-    } catch (error) {
-        console.error('Erreur PUT /disponibilite:', error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
 });
-
 // ============================================================
 // EXPORTER LE ROUTER
 // ============================================================
