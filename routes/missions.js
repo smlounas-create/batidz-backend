@@ -280,7 +280,7 @@ router.put('/:id/terminer', authenticateToken, async (req, res) => {
 
         const [besoin] = await db.query('SELECT categorie, quantite, quantite_trouvee FROM besoins_chantier WHERE id = ?', [mission.besoin_id]);
         if (besoin.length > 0) {
-            await db.query(`UPDATE annonces SET disponible = 'oui', statut = 'active' WHERE utilisateur_id = ? AND categorie = ? AND disponible = 'non' ORDER BY date_creation DESC LIMIT 1`, [mission.ouvrier_id, besoin[0].categorie]);
+            // ⭐ L'annonce du professionnel n'est plus touchée : sa disponibilité, c'est lui qui la choisit.
             // ⭐ Avant : « en_attente » même si une partie était déjà trouvée
             await mettreAJourBesoin(db, mission.besoin_id, 0);
         }
@@ -322,10 +322,8 @@ router.put('/:id/annuler', authenticateToken, async (req, res) => {
         // ⭐ La quantité trouvée ne baisse que si la mission avait été acceptée (donc comptée)
         if (etaitAcceptee) await mettreAJourBesoin(db, mission.besoin_id, -1);
 
-        const [besoinFull] = await db.query('SELECT categorie FROM besoins_chantier WHERE id = ?', [mission.besoin_id]);
-        if (besoinFull.length > 0) {
-            await db.query(`UPDATE annonces SET disponible = 'oui', statut = 'active' WHERE utilisateur_id = ? AND categorie = ? AND disponible = 'non' ORDER BY date_creation DESC LIMIT 1`, [mission.ouvrier_id, besoinFull[0].categorie]);
-        }
+        // ⭐ L'annonce du professionnel n'est plus touchée (avant : elle était remise « disponible »
+        //    et « active », même si son propriétaire l'avait désactivée).
         res.json({ message: 'Mission annulée' });
     } catch (error) {
         console.error('Erreur PUT /missions/:id/annuler:', error);

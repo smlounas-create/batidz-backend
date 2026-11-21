@@ -129,7 +129,7 @@ router.post('/', authenticateToken, [
 // RECHERCHER DES ANNONCES (GET)
 // ============================================================
 router.get('/', async (req, res) => {
-    const { wilaya, categorie, disponible } = req.query;
+    const { wilaya, categorie } = req.query;
     const db = req.app.get('db');
 
     try {
@@ -137,7 +137,6 @@ router.get('/', async (req, res) => {
             SELECT a.*, 
                    u.nom_complet, 
                    u.profil, 
-                   u.disponible,
                    u.specialite,
                    u.experience,
                    u.salaire_souhaite,
@@ -159,11 +158,9 @@ router.get('/', async (req, res) => {
             query += ' AND a.categorie = ?';
             params.push(categorie);
         }
-       
-        if (disponible && disponible !== '') {
-            query += ' AND a.disponible = ?';
-            params.push(disponible);
-        }
+
+        // ⭐ Seules les annonces « active » sont montrées : désactiver une annonce la retire des recherches.
+        // (La colonne « disponible » n'est plus utilisée.)
 
         query += ' ORDER BY a.date_creation DESC LIMIT 50';
 
@@ -187,7 +184,6 @@ router.get('/mes-annonces', authenticateToken, async (req, res) => {
             `SELECT a.*, 
                     u.nom_complet, 
                     u.profil, 
-                    u.disponible,
                     u.specialite,
                     u.experience,
                     u.salaire_souhaite,
@@ -221,7 +217,6 @@ router.get('/:id', async (req, res) => {
             `SELECT a.*, 
                     u.nom_complet, 
                     u.profil, 
-                    u.disponible,
                     u.specialite,
                     u.experience,
                     u.salaire_souhaite,
@@ -307,11 +302,11 @@ router.put('/:id/statut', authenticateToken, async (req, res) => {
     }
 });
 // ============================================================
-// METTRE À JOUR UNE ANNONCE (PUT) - DISPONIBILITÉ
+// METTRE À JOUR UNE ANNONCE (PUT) - STATUT
 // ============================================================
 router.put('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const { disponible, statut } = req.body;
+    const { statut } = req.body;
     const db = req.app.get('db');
 
     console.log('🔍 PUT /annonces/', id);
@@ -331,45 +326,20 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
         const annonce = check[0];
 
-        // 2️⃣ Autoriser la modification dans 2 cas :
-        //    - L'utilisateur est le propriétaire de l'annonce
-        //    - L'utilisateur est un entrepreneur (pour engager)
-        const estProprietaire = annonce.utilisateur_id === req.user.id;
-        const estEntrepreneur = req.user.profil === 'entrepreneur';
-
-        // Si on modifie la disponibilité (c'est le cas pour "Engager")
-        if (disponible !== undefined) {
-            // L'entrepreneur PEUT modifier la disponibilité
-            if (!estProprietaire && !estEntrepreneur) {
-                return res.status(403).json({ 
-                    message: 'Seul le propriétaire ou un entrepreneur peut modifier la disponibilité' 
-                });
-            }
-        } 
-        // Si on modifie le statut (seul le propriétaire peut le faire)
-        else if (statut !== undefined) {
-            if (!estProprietaire) {
-                return res.status(403).json({ 
-                    message: 'Seul le propriétaire peut modifier le statut de l\'annonce' 
-                });
-            }
-        } 
-        // Si on essaie de modifier autre chose
-        else {
+        // 2️⃣ ⭐ Seul le propriétaire modifie son annonce (avant : n'importe quel entrepreneur
+        //    pouvait changer la disponibilité de n'importe quelle annonce).
+        if (Number(annonce.utilisateur_id) !== Number(req.user.id)) {
+            return res.status(403).json({ 
+                message: 'Seul le propriétaire peut modifier le statut de l\'annonce' 
+            });
+        }
+        if (statut === undefined) {
             return res.status(400).json({ message: 'Aucune donnée à mettre à jour' });
         }
 
-        // 3️⃣ Construire la requête dynamiquement
+        // 3️⃣ Construire la requête
         let updates = [];
         let values = [];
-
-        if (disponible !== undefined) {
-            if (!['oui', 'non'].includes(disponible)) {
-                return res.status(400).json({ message: 'Disponibilité invalide. Utilisez "oui" ou "non"' });
-            }
-            updates.push('disponible = ?');
-            values.push(disponible);
-        }
 
         if (statut !== undefined) {
             const statutsValides = ['active', 'inactive', 'terminee'];
