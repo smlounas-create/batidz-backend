@@ -70,7 +70,10 @@ router.get('/chantier/:chantier_id', authenticateToken, async (req, res) => {
             WHERE m.chantier_id = ?`;
         const params = [chantier_id];
 
-        if (statut && statut !== '' && statut !== 'toutes') {
+        if (statut === 'annulee') {
+            // ⭐ Le filtre « Annulées » montre aussi les propositions refusées par le professionnel
+            query += " AND m.statut IN ('annulee', 'refusee')";
+        } else if (statut && statut !== '' && statut !== 'toutes') {
             query += ' AND m.statut = ?';
             params.push(statut);
         }
@@ -138,6 +141,14 @@ router.post('/', authenticateToken, async (req, res) => {
         if (doublon.length > 0) {
             return res.status(409).json({ message: 'Ce professionnel est déjà engagé pour ce besoin' });
         }
+        // ⭐ Il a déjà refusé CE besoin : on ne le relance pas
+        const [refus] = await db.query(
+            `SELECT id FROM missions WHERE besoin_id = ? AND ouvrier_id = ? AND statut = 'refusee' LIMIT 1`,
+            [besoin_id, ouvrier_id]
+        );
+        if (refus.length > 0) {
+            return res.status(409).json({ message: 'Ce professionnel a déjà refusé ce besoin' });
+        }
 
         // ⭐ Le besoin doit appartenir à CE chantier (avant : on pouvait viser le besoin d'un autre
         //    entrepreneur et modifier son compteur).
@@ -154,7 +165,8 @@ router.post('/', authenticateToken, async (req, res) => {
         //    terminée ou annulée). Les fournisseurs, eux, servent plusieurs chantiers.
         if (typeMission === 'ouvrier') {
             const [enMission] = await db.query(
-                `SELECT id FROM missions WHERE ouvrier_id = ? AND statut = 'en_cours' AND type = 'ouvrier' LIMIT 1`,
+                `SELECT id FROM missions WHERE ouvrier_id = ? AND statut = 'en_cours' AND type = 'ouvrier'
+                 AND (fin_signalee_le IS NULL OR fin_signalee_le > NOW() - INTERVAL 7 DAY) LIMIT 1`,
                 [ouvrier_id]
             );
             if (enMission.length > 0) {
@@ -233,7 +245,8 @@ router.put('/:id/accepter', authenticateToken, async (req, res) => {
         const estOuvrier = missions[0].type === 'ouvrier';
         if (estOuvrier) {
             const [enMission] = await db.query(
-                `SELECT id FROM missions WHERE ouvrier_id = ? AND statut = 'en_cours' AND type = 'ouvrier' AND id <> ? LIMIT 1`,
+                `SELECT id FROM missions WHERE ouvrier_id = ? AND statut = 'en_cours' AND type = 'ouvrier' AND id <> ?
+                 AND (fin_signalee_le IS NULL OR fin_signalee_le > NOW() - INTERVAL 7 DAY) LIMIT 1`,
                 [ouvrierId, missionId]
             );
             if (enMission.length > 0) {
@@ -298,8 +311,9 @@ router.put('/:id/refuser', authenticateToken, async (req, res) => {
             return res.status(400).json({ message: 'Cette mission n\'est plus en attente' });
         }
 
-        // On passe le statut à "annulee" : la mission refusée apparaît dans le filtre « Annulées » de la page chantier
-        await db.query(`UPDATE missions SET statut = 'annulee' WHERE id = ?`, [missionId]);
+        // ⭐ Statut « refusee » (avant : « annulee », confondu avec une annulation par l'entrepreneur).
+        //    La mission apparaît toujours dans le filtre « Annulées » de la page chantier.
+        await db.query(`UPDATE missions SET statut = 'refusee' WHERE id = ?`, [missionId]);
 
         // ⭐ On notifie l'entrepreneur
         const mission = missions[0];
@@ -322,16 +336,17 @@ router.put('/:id/refuser', authenticateToken, async (req, res) => {
 router.put('/:id/terminer', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
     const missionId = req.params.id;
-    const entrepreneurId = req.user.id;
+    const userId = req.user.id;
 
     try {
-        const [missions] = await db.query('SELECT * FROM missions WHERE id = ? AND entrepreneur_id = ?', [missionId, entrepreneurId]);
+        // C'est l'entrepreneur qui confirme la fin de la mission (information remontée par son chef de chantier)
+        const [missions] = await db.query('SELECT * FROM missions WHERE id = ? AND entrepreneur_id = ?', [missionId, userId]);
         if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
         
         const mission = missions[0];
          if (mission.statut === 'en_attente_acceptation') return res.status(400).json({ message: 'Le pro n\'a pas encore accepté cette mission.' });
         if (mission.statut === 'terminee') return res.status(400).json({ message: 'Déjà terminée' });
-        if (mission.statut === 'annulee') return res.status(400).json({ message: 'Mission annulée' });
+        if (mission.statut === 'annulee' || mission.statut === 'refusee') return res.status(400).json({ message: 'Mission annulée' });
 
         const today = new Date().toISOString().split('T')[0];
         await db.query(`UPDATE missions SET statut = 'terminee', date_fin = ? WHERE id = ?`, [today, missionId]);
@@ -339,7 +354,7 @@ router.put('/:id/terminer', authenticateToken, async (req, res) => {
         // ⭐ Notifier le professionnel. Avant : la notification partait vers l'entrepreneur,
         // c'est-à-dire vers la personne qui venait elle-même de cliquer « Terminer ».
         try {
-            const [entrepreneurRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [entrepreneurId]);
+            const [entrepreneurRows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [userId]);
             const nomEntrepreneur = entrepreneurRows[0] ? entrepreneurRows[0].nom_complet : 'L\'entrepreneur';
             await creerNotification(db, mission.ouvrier_id, 'mission_terminee', '✅ Mission terminée', `${nomEntrepreneur} a marqué votre mission comme terminée.`, 'page-ouvrier', missionId);
         } catch (notifError) {
@@ -374,6 +389,7 @@ router.put('/:id/annuler', authenticateToken, async (req, res) => {
         if (mission.statut === 'terminee') return res.status(400).json({ message: 'Déjà terminée' });
         // ⭐ Avant : une 2e annulation diminuait encore la quantité trouvée du besoin
         if (mission.statut === 'annulee') return res.status(400).json({ message: 'Mission déjà annulée' });
+        if (mission.statut === 'refusee') return res.status(400).json({ message: 'Mission refusée par le professionnel' });
         const etaitAcceptee = mission.statut === 'en_cours';   // statut AVANT l'annulation
 
         await db.query(`UPDATE missions SET statut = 'annulee' WHERE id = ?`, [missionId]);
@@ -395,6 +411,106 @@ router.put('/:id/annuler', authenticateToken, async (req, res) => {
         res.json({ message: 'Mission annulée' });
     } catch (error) {
         console.error('Erreur PUT /missions/:id/annuler:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// ⭐ FIN DE MISSION : le professionnel SIGNALE, l'entrepreneur CONFIRME (« Terminer ») ou CONTESTE
+//    - signaler : la mission reste « en cours », l'entrepreneur est prévenu ;
+//    - sans réponse : rappel à l'entrepreneur au bout de 3 jours (voir notifications.js) ;
+//      au bout de 7 jours, l'ouvrier redevient disponible (la mission attend toujours sa confirmation) ;
+//    - contester : la mission reste en cours, le professionnel est prévenu.
+// ============================================================
+router.put('/:id/signaler-fin', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    const missionId = req.params.id;
+    try {
+        const [missions] = await db.query('SELECT * FROM missions WHERE id = ? AND ouvrier_id = ?', [missionId, req.user.id]);
+        if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
+        const mission = missions[0];
+        if (mission.statut !== 'en_cours') return res.status(400).json({ message: 'Seule une mission en cours peut être signalée terminée' });
+        if (mission.fin_signalee_le) return res.status(400).json({ message: 'La fin de cette mission a déjà été signalée' });
+
+        await db.query('UPDATE missions SET fin_signalee_le = NOW(), rappel_fin_envoye = 0 WHERE id = ?', [missionId]);
+        try {
+            const [rows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [req.user.id]);
+            const nomPro = rows[0] ? rows[0].nom_complet : 'Le pro';
+            await creerNotification(db, mission.entrepreneur_id, 'mission_fin_signalee', '📣 Fin de mission signalée',
+                `${nomPro} indique avoir terminé sa mission. Confirmez-la ou contestez-la.`, 'page-chantier-detail', missionId);
+        } catch (e) {
+            console.error('Erreur notification fin signalée:', e);
+        }
+        res.json({ message: 'Fin de mission signalée' });
+    } catch (error) {
+        console.error('Erreur PUT /missions/:id/signaler-fin:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+router.put('/:id/contester-fin', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    const missionId = req.params.id;
+    try {
+        const [missions] = await db.query('SELECT * FROM missions WHERE id = ? AND entrepreneur_id = ?', [missionId, req.user.id]);
+        if (missions.length === 0) return res.status(404).json({ message: 'Mission non trouvée' });
+        const mission = missions[0];
+        if (mission.statut !== 'en_cours' || !mission.fin_signalee_le) return res.status(400).json({ message: 'Aucune fin signalée pour cette mission' });
+
+        await db.query('UPDATE missions SET fin_signalee_le = NULL, rappel_fin_envoye = 0 WHERE id = ?', [missionId]);
+        try {
+            const [rows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [req.user.id]);
+            const nomEntrepreneur = rows[0] ? rows[0].nom_complet : 'L\'entrepreneur';
+            await creerNotification(db, mission.ouvrier_id, 'mission_fin_contestee', '↩️ Fin de mission contestée',
+                `${nomEntrepreneur} a contesté la fin de la mission : elle reste en cours.`, 'page-ouvrier', missionId);
+        } catch (e) {
+            console.error('Erreur notification contestation:', e);
+        }
+        res.json({ message: 'Fin contestée' });
+    } catch (error) {
+        console.error('Erreur PUT /missions/:id/contester-fin:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// ⭐ CLÔTURER UN CHANTIER : ses missions en cours sont terminées, ses propositions en attente annulées
+//    (appelé quand l'entrepreneur passe le chantier à « Terminé » et l'accepte)
+// ============================================================
+router.put('/chantier/:chantier_id/cloturer', authenticateToken, async (req, res) => {
+    const db = req.app.get('db');
+    const { chantier_id } = req.params;
+    try {
+        const [chantier] = await db.query('SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?', [chantier_id, req.user.id]);
+        if (chantier.length === 0) return res.status(403).json({ message: 'Non autorisé' });
+
+        const [ouvertes] = await db.query(
+            `SELECT id, ouvrier_id, besoin_id, statut FROM missions WHERE chantier_id = ? AND statut IN ('en_cours', 'en_attente_acceptation')`,
+            [chantier_id]
+        );
+        const [rows] = await db.query('SELECT nom_complet FROM utilisateurs WHERE id = ?', [req.user.id]);
+        const nomEntrepreneur = rows[0] ? rows[0].nom_complet : 'L\'entrepreneur';
+        const today = new Date().toISOString().split('T')[0];
+        const besoins = new Set();
+        let terminees = 0, annulees = 0;
+
+        for (const m of ouvertes) {
+            if (m.statut === 'en_cours') {
+                await db.query(`UPDATE missions SET statut = 'terminee', date_fin = ? WHERE id = ?`, [today, m.id]);
+                await creerNotification(db, m.ouvrier_id, 'mission_terminee', '✅ Mission terminée', `${nomEntrepreneur} a marqué votre mission comme terminée.`, 'page-ouvrier', m.id);
+                terminees++;
+            } else {
+                await db.query(`UPDATE missions SET statut = 'annulee' WHERE id = ?`, [m.id]);
+                await creerNotification(db, m.ouvrier_id, 'mission_annulee', '❌ Mission annulée', `${nomEntrepreneur} a annulé la mission.`, 'page-ouvrier', m.id);
+                annulees++;
+            }
+            if (m.besoin_id) besoins.add(m.besoin_id);
+        }
+        for (const besoinId of besoins) await mettreAJourBesoin(db, besoinId, 0);
+
+        res.json({ message: 'Chantier clôturé', terminees, annulees });
+    } catch (error) {
+        console.error('Erreur PUT /missions/chantier/:id/cloturer:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });

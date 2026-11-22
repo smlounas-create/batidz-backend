@@ -27,7 +27,16 @@ router.post('/', authenticateToken, [
         return res.status(401).json({ message: 'Utilisateur non authentifié' });
     }
 
-    const { type_annonce, categorie, titre, description, wilaya, budget } = req.body;
+    const { type_annonce, categorie, titre, description, wilaya, budget,
+            specialite, experience, tranche_horaire, salaire_souhaite, type_remuneration } = req.body;
+    // ⭐ Chaque annonce garde SES informations (métier, expérience, salaire... ou type de matériel).
+    //    Avant : elles étaient écrites dans le profil, et toutes les annonces de la personne
+    //    prenaient le dernier métier saisi. Un ouvrier peut ainsi avoir une annonce par métier.
+    const texte = v => (v === undefined || v === null || String(v).trim() === '') ? null : String(v).trim().slice(0, 100);
+    const salaireAnnonce = (salaire_souhaite === undefined || salaire_souhaite === null || salaire_souhaite === '') ? null : Number(salaire_souhaite);
+    if (salaireAnnonce !== null && (!Number.isFinite(salaireAnnonce) || salaireAnnonce < 0)) {
+        return res.status(400).json({ message: 'Salaire invalide' });
+    }
     const db = req.app.get('db');
     let creditRetire = false, annonceCreee = false;
 
@@ -91,9 +100,11 @@ router.post('/', authenticateToken, [
         // ⭐ 4. Insérer l'annonce
         const [result] = await db.query(
             `INSERT INTO annonces 
-            (utilisateur_id, categorie, titre, description, wilaya, statut) 
-            VALUES (?, ?, ?, ?, ?, ?)`,
-            [req.user.id, categorie, titre, description, wilaya, 'active' ]
+            (utilisateur_id, categorie, titre, description, wilaya, statut,
+             specialite, experience, tranche_horaire, salaire_souhaite, type_remuneration) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [req.user.id, categorie, titre, description, wilaya, 'active',
+             texte(specialite), texte(experience), texte(tranche_horaire), salaireAnnonce, texte(type_remuneration)]
         );
         annonceCreee = true;
  console.log('✅ Annonce insérée, ID:', result.insertId);
@@ -153,10 +164,6 @@ router.get('/', async (req, res) => {
             SELECT a.*, 
                    u.nom_complet, 
                    u.profil, 
-                   u.specialite,
-                   u.experience,
-                   u.salaire_souhaite,
-                   u.type_remuneration,
                    u.marque_materiel,
                    u.annee_materiel,
                    u.conditionnement_materiaux
@@ -182,7 +189,8 @@ router.get('/', async (req, res) => {
         //    jusqu'à ce que la mission soit terminée ou annulée. Les fournisseurs ne sont pas concernés.
         query += ` AND NOT (a.categorie = 'main_oeuvre' AND EXISTS (
                        SELECT 1 FROM missions m
-                       WHERE m.ouvrier_id = a.utilisateur_id AND m.statut = 'en_cours' AND m.type = 'ouvrier'))`;
+                       WHERE m.ouvrier_id = a.utilisateur_id AND m.statut = 'en_cours' AND m.type = 'ouvrier'
+                         AND (m.fin_signalee_le IS NULL OR m.fin_signalee_le > NOW() - INTERVAL 7 DAY)))`;
 
         query += ' ORDER BY a.date_creation DESC LIMIT 50';
 
@@ -206,10 +214,6 @@ router.get('/mes-annonces', authenticateToken, async (req, res) => {
             `SELECT a.*, 
                     u.nom_complet, 
                     u.profil, 
-                    u.specialite,
-                    u.experience,
-                    u.salaire_souhaite,
-                    u.type_remuneration,
                     u.marque_materiel,
                     u.annee_materiel,
                     u.conditionnement_materiaux
@@ -239,10 +243,6 @@ router.get('/:id', async (req, res) => {
             `SELECT a.*, 
                     u.nom_complet, 
                     u.profil, 
-                    u.specialite,
-                    u.experience,
-                    u.salaire_souhaite,
-                    u.type_remuneration,
                     u.marque_materiel,
                     u.annee_materiel,
                     u.conditionnement_materiaux

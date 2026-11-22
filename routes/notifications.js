@@ -24,12 +24,37 @@ async function creerNotification(db, utilisateur_id, type, titre, message, lien_
 }
 
 // ============================================================
+// ⭐ RAPPEL « FIN DE MISSION À CONFIRMER »
+//    Le serveur n'a pas de tâche planifiée : le rappel est créé quand l'entrepreneur ouvre
+//    l'application (chargement de ses notifications), une seule fois par mission.
+// ============================================================
+async function creerRappelsFinDeMission(db, entrepreneurId) {
+    try {
+        const [aRappeler] = await db.query(
+            `SELECT m.id, u.nom_complet FROM missions m JOIN utilisateurs u ON u.id = m.ouvrier_id
+             WHERE m.entrepreneur_id = ? AND m.statut = 'en_cours' AND m.fin_signalee_le IS NOT NULL
+               AND m.fin_signalee_le <= NOW() - INTERVAL 3 DAY AND m.rappel_fin_envoye = 0`,
+            [entrepreneurId]
+        );
+        for (const m of aRappeler) {
+            await db.query('UPDATE missions SET rappel_fin_envoye = 1 WHERE id = ?', [m.id]);
+            await creerNotification(db, entrepreneurId, 'mission_fin_rappel', '⏰ Rappel : fin de mission à confirmer',
+                `${m.nom_complet || 'Le pro'} a signalé la fin de sa mission il y a plus de 3 jours. Confirmez-la ou contestez-la.`,
+                'page-chantier-detail', m.id);
+        }
+    } catch (e) {
+        console.error('Erreur rappels fin de mission:', e);
+    }
+}
+
+// ============================================================
 // GET /api/notifications
 // ============================================================
 router.get('/', authenticateToken, async (req, res) => {
     try {
         const db = req.app.get('db'); // ⭐ On récupère le pool depuis Express !
         const userId = req.user.id;
+        await creerRappelsFinDeMission(db, userId);
         
         const [notifs] = await db.query(
             `SELECT * FROM notifications 
@@ -52,6 +77,7 @@ router.get('/count', authenticateToken, async (req, res) => {
     try {
         const db = req.app.get('db');
         const userId = req.user.id;
+        await creerRappelsFinDeMission(db, userId);
         
         const [rows] = await db.query(
             `SELECT COUNT(*) AS total FROM notifications 
