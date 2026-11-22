@@ -29,6 +29,7 @@ router.post('/', authenticateToken, [
 
     const { type_annonce, categorie, titre, description, wilaya, budget } = req.body;
     const db = req.app.get('db');
+    let creditRetire = false, annonceCreee = false;
 
     try {
  console.log('🔍 1. Récupération de l\'utilisateur ID:', req.user.id);
@@ -73,6 +74,20 @@ router.post('/', authenticateToken, [
             }
         }
 
+        // ⭐ Le crédit est retiré AVANT de publier, en une seule opération qui échoue s'il n'en reste plus.
+        //    (Avant : deux publications simultanées avec 1 crédit passaient toutes les deux → crédits négatifs.)
+        const estPro = user[0].profil === 'ouvrier' || user[0].profil === 'fournisseur_materiel' || user[0].profil === 'fournisseur_materiaux';
+        if (estPro) {
+            const [retrait] = await db.query(
+                'UPDATE utilisateurs SET credits = credits - 1 WHERE id = ? AND credits >= 1',
+                [req.user.id]
+            );
+            if (retrait.affectedRows === 0) {
+                return res.status(402).json({ message: 'Crédits insuffisants pour publier une annonce' });
+            }
+            creditRetire = true;
+        }
+
         // ⭐ 4. Insérer l'annonce
         const [result] = await db.query(
             `INSERT INTO annonces 
@@ -80,6 +95,7 @@ router.post('/', authenticateToken, [
             VALUES (?, ?, ?, ?, ?, ?)`,
             [req.user.id, categorie, titre, description, wilaya, 'active' ]
         );
+        annonceCreee = true;
  console.log('✅ Annonce insérée, ID:', result.insertId);
         const [newAnnonce] = await db.query(
             'SELECT * FROM annonces WHERE id = ?',
@@ -89,11 +105,7 @@ router.post('/', authenticateToken, [
         // ⭐ 5. Déduire 1 crédit pour ouvrier/fournisseur
         let creditsRestants = null;
         if (user[0].profil === 'ouvrier' || user[0].profil === 'fournisseur_materiel' || user[0].profil === 'fournisseur_materiaux') {
-            console.log('🔍 4. Déduction d\'un crédit'); 
-           await db.query(
-                'UPDATE utilisateurs SET credits = credits - 1 WHERE id = ?',
-                [req.user.id]
-            );
+            // (le crédit a déjà été retiré avant la publication)
             
             // Récupérer les crédits restants
             const [updatedUser] = await db.query(
@@ -120,6 +132,10 @@ router.post('/', authenticateToken, [
 
     } catch (error) {
         console.error('Erreur SQL:', error);
+        // ⭐ Crédit retiré mais annonce non publiée : on le rend
+        if (creditRetire && !annonceCreee) {
+            try { await db.query('UPDATE utilisateurs SET credits = credits + 1 WHERE id = ?', [req.user.id]); } catch (e) {}
+        }
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
@@ -255,6 +271,14 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     console.log('👤 Utilisateur:', req.user);
    
     try {
+        // ⭐ On vérifie d'abord que l'annonce appartient à l'utilisateur.
+        //    (Avant : les paiements de N'IMPORTE QUELLE annonce étaient effacés, même si elle
+        //     appartenait à quelqu'un d'autre ; seule l'annonce elle-même était protégée.)
+        const [miennes] = await db.query('SELECT id FROM annonces WHERE id = ? AND utilisateur_id = ?', [id, req.user.id]);
+        if (miennes.length === 0) {
+            return res.status(404).json({ message: 'Annonce non trouvée' });
+        }
+
           await db.query(
             'DELETE FROM paiements_annonces WHERE annonce_id = ?',
             [id]

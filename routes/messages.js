@@ -74,7 +74,17 @@ router.post('/', authenticateToken, async (req, res) => {
         return res.status(400).json({ message: 'Destinataire et contenu obligatoires' });
     }
 
+    if (Number(destinataire_id) === Number(expediteurId)) {
+        return res.status(400).json({ message: 'Vous ne pouvez pas vous écrire à vous-même' });
+    }
+
     try {
+        // ⭐ Le destinataire doit exister (avant : erreur serveur ou message perdu)
+        const [dest] = await db.query('SELECT id FROM utilisateurs WHERE id = ?', [destinataire_id]);
+        if (dest.length === 0) {
+            return res.status(404).json({ message: 'Destinataire introuvable' });
+        }
+
         // ⭐ On inclut annonce_id dans l'insertion (s'il existe, sinon NULL)
         const [result] = await db.query(
             `INSERT INTO messages (expediteur_id, destinataire_id, annonce_id, contenu) VALUES (?, ?, ?, ?)`,

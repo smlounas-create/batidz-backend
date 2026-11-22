@@ -119,7 +119,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     try {
         const [result] = await db.query(
             `UPDATE chantiers 
-             SET nom = ?, description = ?, wilaya = ?, adresse = ?, date_debut = ?, date_fin_prevue = ?, statut = ?
+             SET nom = ?, description = ?, wilaya = ?, adresse = COALESCE(?, adresse), date_debut = ?, date_fin_prevue = ?, statut = ?
              WHERE id = ? AND entrepreneur_id = ?`,
             [nom, description, wilaya, adresse, date_debut, date_fin_prevue, statut, id, req.user.id]
         );
@@ -143,6 +143,25 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
 
     try {
+        // ⭐ Un chantier qui a des missions (en attente, en cours ou terminées) ne se supprime pas :
+        //    on perdrait l'historique et les notes, et un ouvrier « en mission » resterait bloqué
+        //    pour toujours. Il faut d'abord annuler ou terminer ses missions.
+        const [avecMissions] = await db.query(
+            `SELECT COUNT(*) AS nb FROM missions WHERE chantier_id = ? AND statut IN ('en_attente_acceptation', 'en_cours', 'terminee')`,
+            [id]
+        );
+        if (avecMissions[0].nb > 0) {
+            return res.status(409).json({ message: 'Ce chantier a des missions : annulez-les ou terminez-les avant de le supprimer' });
+        }
+
+        const [mien] = await db.query('SELECT id FROM chantiers WHERE id = ? AND entrepreneur_id = ?', [id, req.user.id]);
+        if (mien.length === 0) {
+            return res.status(404).json({ message: 'Chantier non trouvé' });
+        }
+        // Ses besoins et ses missions annulées partent avec lui (avant : ils restaient orphelins)
+        await db.query('DELETE FROM missions WHERE chantier_id = ?', [id]);
+        await db.query('DELETE FROM besoins_chantier WHERE chantier_id = ?', [id]);
+
         const [result] = await db.query(
             `DELETE FROM chantiers WHERE id = ? AND entrepreneur_id = ?`,
             [id, req.user.id]

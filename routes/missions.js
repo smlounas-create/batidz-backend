@@ -139,7 +139,10 @@ router.post('/', authenticateToken, async (req, res) => {
             return res.status(409).json({ message: 'Ce professionnel est déjà engagé pour ce besoin' });
         }
 
-        const [besoin] = await db.query('SELECT categorie, quantite FROM besoins_chantier WHERE id = ?', [besoin_id]);
+        // ⭐ Le besoin doit appartenir à CE chantier (avant : on pouvait viser le besoin d'un autre
+        //    entrepreneur et modifier son compteur).
+        const [besoin] = await db.query('SELECT categorie, quantite FROM besoins_chantier WHERE id = ? AND chantier_id = ?', [besoin_id, chantier_id]);
+        if (besoin.length === 0) return res.status(404).json({ message: 'Besoin non trouvé sur ce chantier' });
         let typeMission = type || 'ouvrier';
         if (!type && besoin.length > 0) {
             const map = { 'main_oeuvre': 'ouvrier', 'materiel': 'materiel', 'materiaux': 'materiaux' };
@@ -451,23 +454,9 @@ router.put('/:id/paiement', authenticateToken, async (req, res) => {
     }
 });
 
-// ============================================================
-// PUT /api/missions/:id/statut
-// ============================================================
-router.put('/:id/statut', authenticateToken, async (req, res) => {
-    const db = req.app.get('db');
-    const missionId = req.params.id;
-    const { statut } = req.body;
-    if (!['en_cours', 'terminee', 'annulee'].includes(statut)) return res.status(400).json({ message: 'Statut invalide' });
-
-    try {
-        const [result] = await db.query('UPDATE missions SET statut = ? WHERE id = ? AND entrepreneur_id = ?', [statut, missionId, req.user.id]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Non trouvée' });
-        res.json({ message: 'Statut mis à jour', statut });
-    } catch (error) {
-        console.error('Erreur PUT /missions/:id/statut:', error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
-});
+// ⭐ La route PUT /api/missions/:id/statut a été retirée : le site ne s'en servait pas, et elle
+//    permettait de passer une mission « en cours » sans l'accord du professionnel (ce qui bloquait
+//    un ouvrier), sans mettre à jour le besoin ni prévenir personne. On utilise accepter / refuser /
+//    terminer / annuler, qui font tout cela.
 
 module.exports = router;

@@ -29,6 +29,13 @@ router.post('/', authenticateToken, async (req, res) => {
     if (!chantier_id || !categorie || !titre) {
         return res.status(400).json({ message: 'Champs obligatoires manquants' });
     }
+    // ⭐ Catégorie connue et quantité entière d'au moins 1 (les missions comptent en nombres entiers)
+    if (!['main_oeuvre', 'materiel', 'materiaux'].includes(categorie)) {
+        return res.status(400).json({ message: 'Catégorie invalide' });
+    }
+    if (quantite !== undefined && quantite !== null && quantite !== '' && (!Number.isInteger(Number(quantite)) || Number(quantite) < 1)) {
+        return res.status(400).json({ message: 'La quantité doit être un nombre entier d\'au moins 1' });
+    }
 
     try {
         // Vérifier que le chantier appartient à l'entrepreneur

@@ -15,6 +15,7 @@ const loginLimiter = rateLimit({
     message: {
         message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.'
     },
+    skipSuccessfulRequests: true,     // ⭐ seules les tentatives ratées comptent
     standardHeaders: true,
     legacyHeaders: false
 });
@@ -31,23 +32,10 @@ const inscriptionLimiter = rateLimit({
 });
 // ============================================================
 // MIDDLEWARE D'AUTHENTIFICATION
+// ⭐ Le même que pour toutes les autres routes (avant : une copie ici, avec une autre clé de secours)
 // ============================================================
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (!token) {
-        return res.status(401).json({ message: 'Token manquant' });
-    }
-    
-    jwt.verify(token, process.env.JWT_SECRET || 'secret_development', (err, user) => {
-        if (err) {
-            return res.status(403).json({ message: 'Token invalide' });
-        }
-        req.user = user;
-        next();
-    });
-};
+const authenticateToken = require('../middleware/auth');
+const { cleJWT } = require('../middleware/auth');
 
 // ============================================================
 // INSCRIPTION
@@ -117,7 +105,7 @@ router.post('/inscription',  inscriptionLimiter,  [
 
         const token = jwt.sign(
             { id: result.insertId, email, profil },
-            process.env.JWT_SECRET || 'secret_development',
+            cleJWT(),
             { expiresIn: '7d' }
         );
 
@@ -170,7 +158,7 @@ router.post('/connexion', loginLimiter,  [
 
         const token = jwt.sign(
             { id: user.id, email: user.email, profil: user.profil },
-            process.env.JWT_SECRET || 'secret_development',
+            cleJWT(),
             { expiresIn: '7d' }
         );
 
@@ -282,6 +270,24 @@ router.put('/me', authenticateToken, async (req, res) => {
     const query = `UPDATE utilisateurs SET ${setClauses.join(', ')} WHERE id = ?`;
     
     try {
+        // ⭐ Email et téléphone : valides et pas déjà pris par un autre compte
+        //    (avant : deux comptes pouvaient avoir le même email, et la connexion tombait sur le mauvais)
+        if (updates.email !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(updates.email))) {
+            return res.status(400).json({ message: 'Email invalide' });
+        }
+        if (updates.telephone !== undefined && String(updates.telephone).trim() === '') {
+            return res.status(400).json({ message: 'Téléphone requis' });
+        }
+        if (updates.email !== undefined || updates.telephone !== undefined) {
+            const [pris] = await db.query(
+                'SELECT id FROM utilisateurs WHERE (email = ? OR telephone = ?) AND id <> ?',
+                [updates.email ?? null, updates.telephone ?? null, userId]
+            );
+            if (pris.length > 0) {
+                return res.status(409).json({ message: 'Email ou téléphone déjà utilisé' });
+            }
+        }
+
         await db.query(query, values);
         
         // Récupérer l'utilisateur mis à jour
