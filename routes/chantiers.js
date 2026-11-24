@@ -2,6 +2,10 @@ const express = require('express');
 const authenticateToken = require('../middleware/auth');  // ⭐ Renommé pour clarté
 const router = express.Router();
 
+// ⭐ Entrepreneur sans abonnement (ni essai en cours) : accès refusé à ces routes
+const { exigerAbonnement } = require('../middleware/abonnement');
+router.use(exigerAbonnement);
+
 // ============================================================
 // CRÉER UN CHANTIER (POST)
 // ============================================================

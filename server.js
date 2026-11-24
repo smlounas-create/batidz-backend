@@ -7,6 +7,9 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
+// ⭐ Render place un relais devant le serveur : sans ce réglage, tous les visiteurs semblent venir
+//    de la même adresse, et les limites anti-abus (5 connexions / 15 min, 3 inscriptions / heure)
+//    s'appliquaient à TOUT LE MONDE en même temps au lieu de chaque visiteur.
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 1000;
 
@@ -57,7 +60,13 @@ const corsOptions = {
 app.use(cors(corsOptions));
 // ⭐ Les photos sont envoyées en texte (base64) : jusqu'à ~7 Mo pour une photo de 5 Mo.
 // La limite par défaut d'Express (100 Ko) refusait presque toutes les photos.
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+    limit: '10mb',
+    // ⭐ Paiement par carte : Chargily signe le message reçu tel quel ; on le garde pour vérifier la signature
+    verify: (req, res, buf) => {
+        if (req.originalUrl && req.originalUrl.startsWith('/api/paiements/webhook')) req.rawBody = buf;
+    }
+}));
 
 // ============================================================
 // 2. CONNEXION MySQL (Clever Cloud avec SSL)
@@ -143,6 +152,10 @@ app.use('/api/notifications', notificationRoutes);
 
 const messageRoutes = require('./routes/messages');
 app.use('/api/messages', messageRoutes);
+
+// ⭐ Achat de crédits et d'abonnement (reçu CCP / BaridiMob ou carte CIB / Edahabia)
+const paiementRoutes = require('./routes/paiements');
+app.use('/api/paiements', paiementRoutes);
 
 // ============================================================
 // 4. GESTION DES ERREURS

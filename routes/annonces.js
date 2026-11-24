@@ -1,8 +1,12 @@
 const express = require('express');
 const authenticateToken = require('../middleware/auth');
+const { abonnementActif, exigerAbonnement } = require('../middleware/abonnement');
 const { body, validationResult } = require('express-validator');
 
 const router = express.Router();
+
+// ⭐ Entrepreneur sans abonnement (ni essai en cours) : accès refusé à ces routes
+router.use(exigerAbonnement);
 
 // ============================================================
 // CRÉER UNE ANNONCE (POST)
@@ -60,6 +64,7 @@ router.post('/', authenticateToken, [
             // Vérifier si l'utilisateur a des crédits
             if (user[0].credits < 1) {
                 return res.status(402).json({ 
+                    code: 'credits_insuffisants',
                     message: 'Crédits insuffisants pour publier une annonce',
                     credits: user[0].credits,
                     solde: user[0].solde,
@@ -70,12 +75,10 @@ router.post('/', authenticateToken, [
   console.log('🔍 3. Insertion de l\'annonce...');
         // ⭐ 3. VÉRIFICATION DE L'ABONNEMENT (entrepreneur)
         if (user[0].profil === 'entrepreneur') {
-            // Vérifier si l'abonnement est actif et non expiré
-            const dateFin = new Date(user[0].abonnement_date_fin);
-            const now = new Date();
-            
-            if (user[0].abonnement_statut !== 'actif' || dateFin < now) {
+            // ⭐ Abonnement payé OU essai gratuit en cours (même règle que le reste de l'application)
+            if (!(await abonnementActif(db, req.user.id))) {
                 return res.status(402).json({ 
+                    code: 'abonnement_requis',
                     message: 'Abonnement actif requis pour créer une annonce',
                     abonnement_statut: user[0].abonnement_statut,
                     date_fin: user[0].abonnement_date_fin
@@ -92,7 +95,7 @@ router.post('/', authenticateToken, [
                 [req.user.id]
             );
             if (retrait.affectedRows === 0) {
-                return res.status(402).json({ message: 'Crédits insuffisants pour publier une annonce' });
+                return res.status(402).json({ code: 'credits_insuffisants', message: 'Crédits insuffisants pour publier une annonce' });
             }
             creditRetire = true;
         }

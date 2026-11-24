@@ -6,6 +6,10 @@ const router = express.Router();
 const authenticateToken = require('../middleware/auth');
 const { creerNotification } = require('./notifications');
 
+// ⭐ Entrepreneur sans abonnement (ni essai en cours) : accès refusé à ces routes
+const { exigerAbonnement } = require('../middleware/abonnement');
+router.use(exigerAbonnement);
+
 // ⭐ Ajuste la quantité trouvée d'un besoin (+1, -1 ou 0) et recalcule son statut.
 // Avant : rien n'augmentait jamais quantite_trouvee, donc un besoin ne passait jamais « satisfait ».
 // ⭐ Recalcule la quantité trouvée d'un besoin à partir de ses missions acceptées ou terminées.

@@ -36,6 +36,7 @@ const inscriptionLimiter = rateLimit({
 // ============================================================
 const authenticateToken = require('../middleware/auth');
 const { cleJWT } = require('../middleware/auth');
+const { abonnementActif } = require('../middleware/abonnement');
 
 // ============================================================
 // INSCRIPTION
@@ -90,8 +91,8 @@ router.post('/inscription',  inscriptionLimiter,  [
                 registre_commerce, qualification,
                marque_materiel, annee_materiel,
                 conditionnement_materiaux,
-                credits
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                credits, abonnement_statut, abonnement_date_fin
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 nom_complet, email, telephone, mot_de_passe_hash, profil, wilaya,
                 specialite || null, experience || null, tranche_horaire || null, salaire_souhaite || null,
@@ -99,7 +100,10 @@ router.post('/inscription',  inscriptionLimiter,  [
                  registre_commerce || null, qualification || null,
                 marque_materiel || null, annee_materiel || null,
                  conditionnement_materiaux || null,
-                5  // ⭐ 5 crédits offert
+                5,  // ⭐ 5 crédits offert
+                // ⭐ Entrepreneur : essai gratuit (30 jours par défaut, réglable avec ESSAI_JOURS sur Render)
+                profil === 'entrepreneur' ? 'essai' : null,
+                profil === 'entrepreneur' ? new Date(Date.now() + (parseInt(process.env.ESSAI_JOURS, 10) || 30) * 86400000) : null
             ]
         );
 
@@ -111,7 +115,7 @@ router.post('/inscription',  inscriptionLimiter,  [
 
         // Récupérer l'utilisateur créé
         const [newUser] = await db.query(
-            'SELECT id, nom_complet, email, profil, wilaya, specialite, experience, tranche_horaire, salaire_souhaite, type_remuneration, securite_sociale FROM utilisateurs WHERE id = ?',
+            'SELECT id, nom_complet, email, profil, wilaya, specialite, experience, tranche_horaire, salaire_souhaite, type_remuneration, securite_sociale, credits, abonnement_statut, abonnement_date_fin FROM utilisateurs WHERE id = ?',
             [result.insertId]
         );
 
@@ -187,7 +191,11 @@ router.post('/connexion', loginLimiter,  [
                 annee_materiel: user.annee_materiel,
                 conditionnement_materiaux: user.conditionnement_materiaux,
             photo: user.photo,
-                credits: user.credits || 0
+                credits: user.credits || 0,
+                abonnement_statut: user.abonnement_statut || null,
+                abonnement_date_fin: user.abonnement_date_fin || null,
+                est_admin: Number(user.est_admin) === 1,
+                abonnement_actif: user.profil === 'entrepreneur' ? await abonnementActif(db, user.id) : null
             }
         });
     } catch (error) {
@@ -211,9 +219,10 @@ router.get('/me', authenticateToken, async (req, res) => {
             `SELECT id, nom_complet, email, telephone, profil, wilaya,
                    specialite,  experience, tranche_horaire, salaire_souhaite,
                     type_remuneration, securite_sociale,
-                    registre_commerce, qualification, credits,
+                    registre_commerce, qualification, credits, abonnement_statut, abonnement_date_fin, est_admin,
                      marque_materiel, annee_materiel, photo,
-                     conditionnement_materiaux
+                     conditionnement_materiaux,
+                     (abonnement_date_fin IS NOT NULL AND DATE(abonnement_date_fin) >= CURDATE()) AS abonnement_actif
              FROM utilisateurs 
              WHERE id = ?`,
             [req.user.id]
@@ -223,6 +232,7 @@ router.get('/me', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'Utilisateur non trouvé' });
         }
         
+        // ⭐ abonnement_actif (1/0) : abonnement payé ou essai gratuit en cours — utile aux entrepreneurs
         res.json(users[0]);
     } catch (error) {
         console.error('Erreur GET /me:', error);
@@ -295,7 +305,7 @@ router.put('/me', authenticateToken, async (req, res) => {
             `SELECT id, nom_complet, email, telephone, profil, wilaya,
                     specialite, experience, tranche_horaire, salaire_souhaite,
                     type_remuneration, securite_sociale,
-                    registre_commerce, qualification, credits,
+                    registre_commerce, qualification, credits, abonnement_statut, abonnement_date_fin, est_admin,
                     marque_materiel, annee_materiel, photo,
                      conditionnement_materiaux
              FROM utilisateurs 

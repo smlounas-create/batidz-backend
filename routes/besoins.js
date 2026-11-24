@@ -3,6 +3,10 @@ const authenticateToken = require('../middleware/auth');
 const { creerNotification } = require('./notifications');
 const router = express.Router();
 
+// ⭐ Entrepreneur sans abonnement (ni essai en cours) : accès refusé à ces routes
+const { exigerAbonnement } = require('../middleware/abonnement');
+router.use(exigerAbonnement);
+
 // ⭐ Vérifie que le besoin appartient à un chantier de l'utilisateur connecté
 async function besoinDeLUtilisateur(db, besoinId, userId) {
     const [rows] = await db.query(

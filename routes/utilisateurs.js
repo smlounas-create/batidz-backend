@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const authenticateToken = require('../middleware/auth');
+const { exigerAbonnement } = require('../middleware/abonnement');
 // ============================================================
 // ⭐ NOUVEAU : COMPTER LES FOURNISSEURS (pour le badge header)
 // ============================================================
@@ -97,7 +98,8 @@ router.get('/', async (req, res) => {
 // ============================================================
 // GET /api/utilisateurs/:id - Récupérer un utilisateur par ID
 // ============================================================
-router.get('/:id', authenticateToken, async (req, res) => {
+// ⭐ Téléphone et email : un entrepreneur doit avoir un abonnement actif (ou être en essai)
+router.get('/:id', authenticateToken, exigerAbonnement, async (req, res) => {
     const db = req.app.get('db');
     const userId = req.params.id;
 

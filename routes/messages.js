@@ -4,6 +4,10 @@ const router = express.Router();
 const authenticateToken = require('../middleware/auth');
 const { creerNotification } = require('./notifications');
 
+// ⭐ Entrepreneur sans abonnement (ni essai en cours) : accès refusé à ces routes
+const { exigerAbonnement } = require('../middleware/abonnement');
+router.use(exigerAbonnement);
+
 // ============================================================
 // GET /api/messages/contacts
 // Récupérer la liste des personnes avec qui on a discuté
