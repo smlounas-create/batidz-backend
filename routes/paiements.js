@@ -5,13 +5,14 @@
 //    - par carte CIB / Edahabia en ligne (Chargily Pay) : validé automatiquement par le webhook.
 //
 // Réglages sur Render (rubrique Environment) — rien n'est écrit dans le code :
-//    PRIX_CREDIT_OUVRIER (500 par défaut), PRIX_CREDIT_FOURNISSEUR (1000 par défaut),
+//    PRIX_CREDIT_OUVRIER (300 par défaut), PRIX_CREDIT_FOURNISSEUR (1200 par défaut) — prix TVA comprise, onglet « Prix ronds »,
 //    PRIX_ABONNEMENT_MENSUEL (3500 par défaut), PRIX_ABONNEMENT_ANNUEL (10 mois du mensuel par défaut),
 //    PAIEMENT_TITULAIRE, PAIEMENT_CCP, PAIEMENT_BARIDIMOB (affichés aux clients qui paient par virement CCP / BaridiMob),
 //    PAIEMENT_BANQUE_NOM, PAIEMENT_BANQUE_RIB, PAIEMENT_BANQUE_TITULAIRE (virement bancaire compte à compte ;
 //    sans PAIEMENT_BANQUE_TITULAIRE, c'est PAIEMENT_TITULAIRE qui est affiché),
 //    CHARGILY_SECRET_KEY (sans elle, la carte n'est pas proposée), CHARGILY_MODE (« test » ou « live »),
 //    PRIX_FORMATION_SEMAINE (3000 par défaut), PRIX_FORMATION_MOIS (9000 par défaut) : parution d'une annonce de formation.
+//    REMISES_CREDITS_FOURNISSEUR (« 5:10,10:20 » par défaut) : à partir de 5 annonces −10 %, à partir de 10 annonces −20 %.
 //    ⭐ Chaque prix a une valeur par défaut : une variable créée sur Render la remplace, à tout moment.
 //    ⭐ Les coordonnées de paiement (titulaire, CCP, RIP, banque, RIB) se saisissent AUSSI dans l'espace
 //       administrateur du site (table « parametres ») : la valeur du site passe avant celle de Render.
@@ -29,6 +30,16 @@ const { ajouterParution, publierSiPrete, PARUTION_MAX } = require('./formations'
 const MOYENS_MANUELS = ['ccp', 'baridimob', 'banque'];
 const CREDITS_MAX_PAR_ACHAT = 50;
 const RECU_TAILLE_MAX = 3 * 1024 * 1024;   // photo du reçu (déjà réduite à ~200 Ko par le site)
+
+// ⭐ Réduction pour plusieurs annonces (fournisseurs) : « quantité:pourcentage », séparés par des virgules.
+//    Exemple sur Render : REMISES_CREDITS_FOURNISSEUR = 5:10,10:20. « 0 » ou vide = aucune réduction.
+function remisesFournisseur() {
+    const brut = process.env.REMISES_CREDITS_FOURNISSEUR === undefined ? '5:10,10:20' : process.env.REMISES_CREDITS_FOURNISSEUR;
+    return String(brut).split(',').map(x => x.split(':').map(n => parseInt(n, 10)))
+        .filter(([q, p]) => Number.isInteger(q) && q >= 2 && q <= 50 && Number.isInteger(p) && p > 0 && p < 100)
+        .map(([quantite, pourcentage]) => ({ quantite, pourcentage }))
+        .sort((a, b) => a.quantite - b.quantite);
+}
 
 function entier(v) {
     const n = parseInt(v, 10);
@@ -62,10 +73,11 @@ async function coordonneesSite(db) {
 function tarifs(site = {}) {
     const val = (cle) => site[cle] || process.env[cle] || null;
     return {
+        remises: { fournisseur: remisesFournisseur() },
         credit: {
-            ouvrier: entier(process.env.PRIX_CREDIT_OUVRIER) || 500,
-            fournisseur_materiel: entier(process.env.PRIX_CREDIT_FOURNISSEUR) || 1000,
-            fournisseur_materiaux: entier(process.env.PRIX_CREDIT_FOURNISSEUR) || 1000
+            ouvrier: entier(process.env.PRIX_CREDIT_OUVRIER) || 300,
+            fournisseur_materiel: entier(process.env.PRIX_CREDIT_FOURNISSEUR) || 1200,
+            fournisseur_materiaux: entier(process.env.PRIX_CREDIT_FOURNISSEUR) || 1200
         },
         abonnement: {
             mensuel: entier(process.env.PRIX_ABONNEMENT_MENSUEL) || 3500,
@@ -95,7 +107,11 @@ function calculerAchat(profil, { objet, formule, quantite }) {
         if (!t.credit[profil]) return { erreur: 'Les crédits sont réservés aux professionnels' };
         const q = Number(quantite);
         if (!Number.isInteger(q) || q < 1 || q > CREDITS_MAX_PAR_ACHAT) return { erreur: 'Nombre de crédits invalide' };
-        return { objet, formule: null, quantite: q, montant: q * t.credit[profil] };
+        const prixPlein = q * t.credit[profil];
+        // Réduction des fournisseurs : le palier le plus élevé atteint par la quantité
+        const palier = profil.startsWith('fournisseur_') ? t.remises.fournisseur.filter(r => q >= r.quantite).pop() : null;
+        const remise = palier ? palier.pourcentage : 0;
+        return { objet, formule: null, quantite: q, montant: Math.round(prixPlein * (100 - remise) / 100), prix_plein: prixPlein, remise };
     }
     if (objet === 'abonnement') {
         if (profil !== 'entrepreneur') return { erreur: 'L\'abonnement est réservé aux entrepreneurs' };

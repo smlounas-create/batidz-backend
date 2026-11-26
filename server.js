@@ -161,6 +161,10 @@ app.use('/api/paiements', paiementRoutes);
 const formationRoutes = require('./routes/formations');
 app.use('/api/formations', formationRoutes);
 
+// ⭐ Tableau de bord de l'administrateur (tâches à traiter, chiffres clés, réglages manquants)
+const adminRoutes = require('./routes/admin');
+app.use('/api/admin', adminRoutes);
+
 // ============================================================
 // 4. GESTION DES ERREURS
 // ============================================================
@@ -183,4 +187,4 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Serveur démarré sur le port ${PORT}`);
     console.log(`📍 URL: https://batidz-backend-github.onrender.com`);
     console.log(`📊 Health check: https://batidz-backend-github.onrender.com/health`);
-});
+});

@@ -8,10 +8,11 @@
 const jwt = require('jsonwebtoken');
 const { cleJWT } = require('./auth');
 
-// Abonnement (ou essai) valable jusqu'à la fin du jour indiqué
+// Abonnement (ou essai) valable jusqu'à la fin du jour indiqué.
+// ⭐ Un administrateur (est_admin = 1) n'a jamais besoin d'abonnement, quel que soit son profil.
 async function abonnementActif(db, userId) {
     const [rows] = await db.query(
-        'SELECT (abonnement_date_fin IS NOT NULL AND DATE(abonnement_date_fin) >= CURDATE()) AS actif FROM utilisateurs WHERE id = ?',
+        'SELECT ((abonnement_date_fin IS NOT NULL AND DATE(abonnement_date_fin) >= CURDATE()) OR est_admin = 1) AS actif FROM utilisateurs WHERE id = ?',
         [userId]
     );
     return rows.length > 0 && Number(rows[0].actif) === 1;

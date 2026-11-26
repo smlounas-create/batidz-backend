@@ -268,7 +268,7 @@ router.get('/me', authenticateToken, async (req, res) => {
                     registre_commerce, qualification, credits, abonnement_statut, abonnement_date_fin, est_admin,
                      marque_materiel, annee_materiel, photo,
                      conditionnement_materiaux,
-                     (abonnement_date_fin IS NOT NULL AND DATE(abonnement_date_fin) >= CURDATE()) AS abonnement_actif
+                     ((abonnement_date_fin IS NOT NULL AND DATE(abonnement_date_fin) >= CURDATE()) OR est_admin = 1) AS abonnement_actif
              FROM utilisateurs 
              WHERE id = ?`,
             [req.user.id]
