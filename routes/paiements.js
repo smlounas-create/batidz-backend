@@ -7,7 +7,9 @@
 // Réglages sur Render (rubrique Environment) — rien n'est écrit dans le code :
 //    PRIX_CREDIT_OUVRIER (500 par défaut), PRIX_CREDIT_FOURNISSEUR (1000 par défaut),
 //    PRIX_ABONNEMENT_MENSUEL, PRIX_ABONNEMENT_ANNUEL (sans eux, l'abonnement ne peut pas être acheté),
-//    PAIEMENT_TITULAIRE, PAIEMENT_CCP, PAIEMENT_BARIDIMOB (affichés aux clients qui paient par virement),
+//    PAIEMENT_TITULAIRE, PAIEMENT_CCP, PAIEMENT_BARIDIMOB (affichés aux clients qui paient par virement CCP / BaridiMob),
+//    PAIEMENT_BANQUE_NOM, PAIEMENT_BANQUE_RIB, PAIEMENT_BANQUE_TITULAIRE (virement bancaire compte à compte ;
+//    sans PAIEMENT_BANQUE_TITULAIRE, c'est PAIEMENT_TITULAIRE qui est affiché),
 //    CHARGILY_SECRET_KEY (sans elle, la carte n'est pas proposée), CHARGILY_MODE (« test » ou « live »).
 // ============================================================
 
@@ -18,7 +20,7 @@ const authenticateToken = require('../middleware/auth');
 const { abonnementActif } = require('../middleware/abonnement');
 const { creerNotification } = require('./notifications');
 
-const MOYENS_MANUELS = ['ccp', 'baridimob'];
+const MOYENS_MANUELS = ['ccp', 'baridimob', 'banque'];
 const CREDITS_MAX_PAR_ACHAT = 50;
 const RECU_TAILLE_MAX = 3 * 1024 * 1024;   // photo du reçu (déjà réduite à ~200 Ko par le site)
 
@@ -41,7 +43,10 @@ function tarifs() {
         comptes: {
             titulaire: process.env.PAIEMENT_TITULAIRE || null,
             ccp: process.env.PAIEMENT_CCP || null,
-            baridimob: process.env.PAIEMENT_BARIDIMOB || null
+            baridimob: process.env.PAIEMENT_BARIDIMOB || null,
+            banque_titulaire: process.env.PAIEMENT_BANQUE_TITULAIRE || process.env.PAIEMENT_TITULAIRE || null,
+            banque_nom: process.env.PAIEMENT_BANQUE_NOM || null,
+            banque_rib: process.env.PAIEMENT_BANQUE_RIB || null
         },
         carte: !!process.env.CHARGILY_SECRET_KEY
     };
@@ -303,7 +308,7 @@ router.get('/admin/en-attente', authenticateToken, exigerAdmin, async (req, res)
             `SELECT p.id, p.objet, p.formule, p.quantite, p.montant, p.moyen, p.reference, p.recu, p.date_creation,
                     u.nom_complet, u.profil, u.telephone, u.email
              FROM paiements p JOIN utilisateurs u ON u.id = p.utilisateur_id
-             WHERE p.statut = 'en_attente' AND p.moyen IN ('ccp', 'baridimob')
+             WHERE p.statut = 'en_attente' AND p.moyen IN ('ccp', 'baridimob', 'banque')
              ORDER BY p.date_creation ASC`
         );
         res.json(paiements);
@@ -316,7 +321,7 @@ router.get('/admin/en-attente', authenticateToken, exigerAdmin, async (req, res)
 router.put('/admin/:id/valider', authenticateToken, exigerAdmin, async (req, res) => {
     const db = req.app.get('db');
     try {
-        const [rows] = await db.query(`SELECT * FROM paiements WHERE id = ? AND moyen IN ('ccp', 'baridimob')`, [req.params.id]);
+        const [rows] = await db.query(`SELECT * FROM paiements WHERE id = ? AND moyen IN ('ccp', 'baridimob', 'banque')`, [req.params.id]);
         if (rows.length === 0) return res.status(404).json({ message: 'Paiement non trouvé' });
         const fait = await appliquerPaiement(db, rows[0], 'valide', req.user.id);
         if (!fait) return res.status(400).json({ message: 'Ce paiement a déjà été traité' });
@@ -332,7 +337,7 @@ router.put('/admin/:id/refuser', authenticateToken, exigerAdmin, async (req, res
     const motif = String(req.body.motif || '').trim().slice(0, 255);
     if (!motif) return res.status(400).json({ message: 'Indiquez le motif du refus' });
     try {
-        const [rows] = await db.query(`SELECT * FROM paiements WHERE id = ? AND moyen IN ('ccp', 'baridimob')`, [req.params.id]);
+        const [rows] = await db.query(`SELECT * FROM paiements WHERE id = ? AND moyen IN ('ccp', 'baridimob', 'banque')`, [req.params.id]);
         if (rows.length === 0) return res.status(404).json({ message: 'Paiement non trouvé' });
         const [maj] = await db.query(
             `UPDATE paiements SET statut = 'refuse', motif_refus = ?, date_traitement = NOW(), traite_par = ? WHERE id = ? AND statut = 'en_attente'`,
