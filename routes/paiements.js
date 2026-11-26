@@ -6,12 +6,13 @@
 //
 // Réglages sur Render (rubrique Environment) — rien n'est écrit dans le code :
 //    PRIX_CREDIT_OUVRIER (500 par défaut), PRIX_CREDIT_FOURNISSEUR (1000 par défaut),
-//    PRIX_ABONNEMENT_MENSUEL, PRIX_ABONNEMENT_ANNUEL (sans eux, l'abonnement ne peut pas être acheté),
+//    PRIX_ABONNEMENT_MENSUEL (3500 par défaut), PRIX_ABONNEMENT_ANNUEL (10 mois du mensuel par défaut),
 //    PAIEMENT_TITULAIRE, PAIEMENT_CCP, PAIEMENT_BARIDIMOB (affichés aux clients qui paient par virement CCP / BaridiMob),
 //    PAIEMENT_BANQUE_NOM, PAIEMENT_BANQUE_RIB, PAIEMENT_BANQUE_TITULAIRE (virement bancaire compte à compte ;
 //    sans PAIEMENT_BANQUE_TITULAIRE, c'est PAIEMENT_TITULAIRE qui est affiché),
 //    CHARGILY_SECRET_KEY (sans elle, la carte n'est pas proposée), CHARGILY_MODE (« test » ou « live »),
-//    PRIX_FORMATION_SEMAINE, PRIX_FORMATION_MOIS (parution d'une annonce de formation ; sans eux, elle ne peut pas être payée).
+//    PRIX_FORMATION_SEMAINE (3000 par défaut), PRIX_FORMATION_MOIS (9000 par défaut) : parution d'une annonce de formation.
+//    ⭐ Chaque prix a une valeur par défaut : une variable créée sur Render la remplace, à tout moment.
 // ============================================================
 
 const express = require('express');
@@ -39,12 +40,13 @@ function tarifs() {
             fournisseur_materiaux: entier(process.env.PRIX_CREDIT_FOURNISSEUR) || 1000
         },
         abonnement: {
-            mensuel: entier(process.env.PRIX_ABONNEMENT_MENSUEL),
-            annuel: entier(process.env.PRIX_ABONNEMENT_ANNUEL)
+            mensuel: entier(process.env.PRIX_ABONNEMENT_MENSUEL) || 3500,
+            // annuel : 10 mois payés pour 12, calculé sur le mensuel s'il n'est pas fixé sur Render
+            annuel: entier(process.env.PRIX_ABONNEMENT_ANNUEL) || (entier(process.env.PRIX_ABONNEMENT_MENSUEL) || 3500) * 10
         },
         formation: {
-            semaine: entier(process.env.PRIX_FORMATION_SEMAINE),
-            mois: entier(process.env.PRIX_FORMATION_MOIS)
+            semaine: entier(process.env.PRIX_FORMATION_SEMAINE) || 3000,
+            mois: entier(process.env.PRIX_FORMATION_MOIS) || 9000
         },
         comptes: {
             titulaire: process.env.PAIEMENT_TITULAIRE || null,
