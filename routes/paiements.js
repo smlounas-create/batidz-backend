@@ -13,10 +13,13 @@
 //    CHARGILY_SECRET_KEY (sans elle, la carte n'est pas proposée), CHARGILY_MODE (« test » ou « live »),
 //    PRIX_FORMATION_SEMAINE (3000 par défaut), PRIX_FORMATION_MOIS (9000 par défaut) : parution d'une annonce de formation.
 //    ⭐ Chaque prix a une valeur par défaut : une variable créée sur Render la remplace, à tout moment.
+//    ⭐ Les coordonnées de paiement (titulaire, CCP, RIP, banque, RIB) se saisissent AUSSI dans l'espace
+//       administrateur du site (table « parametres ») : la valeur du site passe avant celle de Render.
 // ============================================================
 
 const express = require('express');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const router = express.Router();
 const authenticateToken = require('../middleware/auth');
 const { abonnementActif } = require('../middleware/abonnement');
@@ -32,7 +35,32 @@ function entier(v) {
     return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-function tarifs() {
+// ⭐ Coordonnées de paiement : champ du site → variable Render qu'il remplace
+const COORDONNEES = {
+    titulaire: 'PAIEMENT_TITULAIRE',
+    ccp: 'PAIEMENT_CCP',
+    baridimob: 'PAIEMENT_BARIDIMOB',
+    banque_titulaire: 'PAIEMENT_BANQUE_TITULAIRE',
+    banque_nom: 'PAIEMENT_BANQUE_NOM',
+    banque_rib: 'PAIEMENT_BANQUE_RIB'
+};
+
+// Valeurs saisies dans l'espace administrateur. Si la table n'existe pas encore (parametres.sql
+// pas lancé), on continue avec Render seul : la page de paiement ne doit jamais tomber en panne.
+async function coordonneesSite(db) {
+    try {
+        const [rows] = await db.query('SELECT cle, valeur FROM parametres WHERE cle IN (?)', [Object.values(COORDONNEES)]);
+        const site = {};
+        for (const r of rows) if (r.valeur !== null && String(r.valeur).trim() !== '') site[r.cle] = String(r.valeur).trim();
+        return site;
+    } catch (e) {
+        if (!e || e.code !== 'ER_NO_SUCH_TABLE') console.error('Lecture des coordonnées de paiement:', e && e.message);
+        return {};
+    }
+}
+
+function tarifs(site = {}) {
+    const val = (cle) => site[cle] || process.env[cle] || null;
     return {
         credit: {
             ouvrier: entier(process.env.PRIX_CREDIT_OUVRIER) || 500,
@@ -49,12 +77,12 @@ function tarifs() {
             mois: entier(process.env.PRIX_FORMATION_MOIS) || 9000
         },
         comptes: {
-            titulaire: process.env.PAIEMENT_TITULAIRE || null,
-            ccp: process.env.PAIEMENT_CCP || null,
-            baridimob: process.env.PAIEMENT_BARIDIMOB || null,
-            banque_titulaire: process.env.PAIEMENT_BANQUE_TITULAIRE || process.env.PAIEMENT_TITULAIRE || null,
-            banque_nom: process.env.PAIEMENT_BANQUE_NOM || null,
-            banque_rib: process.env.PAIEMENT_BANQUE_RIB || null
+            titulaire: val('PAIEMENT_TITULAIRE'),
+            ccp: val('PAIEMENT_CCP'),
+            baridimob: val('PAIEMENT_BARIDIMOB'),
+            banque_titulaire: val('PAIEMENT_BANQUE_TITULAIRE') || val('PAIEMENT_TITULAIRE'),
+            banque_nom: val('PAIEMENT_BANQUE_NOM'),
+            banque_rib: val('PAIEMENT_BANQUE_RIB')
         },
         carte: !!process.env.CHARGILY_SECRET_KEY
     };
@@ -161,8 +189,8 @@ async function prevenirAdministrateurs(db, nomClient, montant, paiementId) {
 // ============================================================
 // GET /api/paiements/tarifs — prix, comptes de virement, carte disponible ou non
 // ============================================================
-router.get('/tarifs', authenticateToken, (req, res) => {
-    res.json(tarifs());
+router.get('/tarifs', authenticateToken, async (req, res) => {
+    res.json(tarifs(await coordonneesSite(req.app.get('db'))));
 });
 
 // ============================================================
@@ -359,6 +387,90 @@ async function exigerAdmin(req, res, next) {
     }
 }
 
+// ============================================================
+// ADMINISTRATEUR : coordonnées de paiement affichées aux clients
+// ============================================================
+const chiffres = (v) => String(v).replace(/\D/g, '');
+
+// Contrôle d'un champ ; renvoie un message d'erreur, ou null si la valeur est acceptable
+function erreurCoordonnee(champ, valeur) {
+    if (valeur.length > 100) return 'Valeur trop longue';
+    if (champ === 'ccp') {
+        if (!/^[0-9A-Za-zéÉ .:\-\/]+$/.test(valeur) || chiffres(valeur).length < 6 || chiffres(valeur).length > 14) {
+            return 'Numéro CCP invalide : le numéro du compte et sa clé, en chiffres';
+        }
+    }
+    if (champ === 'baridimob' && (!/^[0-9 .\-]+$/.test(valeur) || chiffres(valeur).length !== 20)) return 'Le RIP doit contenir 20 chiffres';
+    if (champ === 'banque_rib' && (!/^[0-9 .\-]+$/.test(valeur) || chiffres(valeur).length !== 20)) return 'Le RIB doit contenir 20 chiffres';
+    return null;
+}
+
+router.get('/admin/coordonnees', authenticateToken, exigerAdmin, async (req, res) => {
+    const db = req.app.get('db');
+    const site = await coordonneesSite(db);
+    const reponse = { site: {}, render: {}, table_prete: true, derniere_modification: null };
+    for (const [champ, cle] of Object.entries(COORDONNEES)) {
+        reponse.site[champ] = site[cle] || '';
+        reponse.render[champ] = process.env[cle] || '';
+    }
+    try {
+        const [rows] = await db.query(
+            `SELECT p.date_modification, u.nom_complet FROM parametres p LEFT JOIN utilisateurs u ON u.id = p.modifie_par
+             WHERE p.cle IN (?) ORDER BY p.date_modification DESC LIMIT 1`, [Object.values(COORDONNEES)]);
+        if (rows[0]) reponse.derniere_modification = { date: rows[0].date_modification, par: rows[0].nom_complet || null };
+    } catch (e) {
+        if (e && e.code === 'ER_NO_SUCH_TABLE') reponse.table_prete = false;
+        else console.error('Erreur GET /paiements/admin/coordonnees:', e);
+    }
+    res.json(reponse);
+});
+
+// Modifier les coordonnées : mot de passe de l'administrateur exigé, car elles disent où va l'argent des clients.
+// Un champ vide efface la valeur du site : c'est alors la variable Render qui s'applique.
+router.put('/admin/coordonnees', authenticateToken, exigerAdmin, async (req, res) => {
+    const db = req.app.get('db');
+    const corps = req.body || {};
+    try {
+        const [moi] = await db.query('SELECT id, nom_complet, mot_de_passe FROM utilisateurs WHERE id = ?', [req.user.id]);
+        if (!moi[0] || typeof corps.mot_de_passe !== 'string' || !(await bcrypt.compare(corps.mot_de_passe, moi[0].mot_de_passe))) {
+            return res.status(401).json({ message: 'Mot de passe incorrect' });
+        }
+        const aEcrire = [], aEffacer = [];
+        for (const [champ, cle] of Object.entries(COORDONNEES)) {
+            if (corps[champ] === undefined) continue;
+            const valeur = corps[champ] === null ? '' : String(corps[champ]).trim().replace(/\s+/g, ' ');
+            if (valeur === '') { aEffacer.push(cle); continue; }
+            const erreur = erreurCoordonnee(champ, valeur);
+            if (erreur) return res.status(400).json({ message: erreur, champ });
+            aEcrire.push([cle, valeur, moi[0].id]);
+        }
+        if (!aEcrire.length && !aEffacer.length) return res.status(400).json({ message: 'Aucun champ à mettre à jour' });
+
+        if (aEcrire.length) {
+            await db.query(
+                `INSERT INTO parametres (cle, valeur, modifie_par) VALUES ?
+                 ON DUPLICATE KEY UPDATE valeur = VALUES(valeur), modifie_par = VALUES(modifie_par)`, [aEcrire]);
+        }
+        if (aEffacer.length) await db.query('DELETE FROM parametres WHERE cle IN (?)', [aEffacer]);
+
+        // Tous les administrateurs sont prévenus : un changement de compte ne doit jamais passer inaperçu
+        try {
+            const [admins] = await db.query('SELECT id FROM utilisateurs WHERE est_admin = 1');
+            for (const a of admins) {
+                await creerNotification(db, a.id, 'coordonnees_paiement', '🏦 Coordonnées de paiement modifiées',
+                    `${moi[0].nom_complet} a modifié les coordonnées de paiement affichées aux clients.`, 'page-admin-coordonnees', null);
+            }
+        } catch (e) { console.error('Erreur notification coordonnées:', e); }
+        console.log(`Coordonnées de paiement modifiées par l'utilisateur ${moi[0].id} : ${[...aEcrire.map(x => x[0]), ...aEffacer.map(c => c + ' (effacée)')].join(', ')}`);
+
+        res.json({ message: 'Coordonnées enregistrées', comptes: tarifs(await coordonneesSite(db)).comptes });
+    } catch (error) {
+        if (error && error.code === 'ER_NO_SUCH_TABLE') return res.status(503).json({ message: 'Table parametres absente' });
+        console.error('Erreur PUT /paiements/admin/coordonnees:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
 router.get('/admin/en-attente', authenticateToken, exigerAdmin, async (req, res) => {
     const db = req.app.get('db');
     try {
@@ -416,3 +528,4 @@ router.put('/admin/:id/refuser', authenticateToken, exigerAdmin, async (req, res
 module.exports = router;
 module.exports.calculerAchat = calculerAchat;
 module.exports.tarifs = tarifs;
+module.exports.coordonneesSite = coordonneesSite;
