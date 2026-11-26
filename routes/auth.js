@@ -39,11 +39,42 @@ const { cleJWT } = require('../middleware/auth');
 const { abonnementActif } = require('../middleware/abonnement');
 
 // ============================================================
+// EMAIL FACULTATIF ET NUMÉRO DE TÉLÉPHONE
+// ============================================================
+// ⭐ L'email est facultatif pour tous les profils (beaucoup d'ouvriers n'en ont pas) :
+//    on s'inscrit et on se connecte avec son numéro de téléphone.
+const EMAIL_VALIDE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function emailOuNull(valeur) {
+    const e = valeur === undefined || valeur === null ? '' : String(valeur).trim();
+    return e === '' ? null : e;
+}
+
+// « 0667 78 89 90 », « 0667-78-89-90 », « +213 667 78 89 90 » → « 0667788990 »
+function normaliserTelephone(valeur) {
+    const brut = String(valeur ?? '').trim();
+    let chiffres = brut.replace(/\D/g, '');
+    if (chiffres.startsWith('00213')) chiffres = chiffres.slice(2);
+    if (chiffres.startsWith('213') && chiffres.length === 12) chiffres = '0' + chiffres.slice(3);
+    if (chiffres.length === 9 && /^[5-7]/.test(chiffres)) chiffres = '0' + chiffres;
+    return /^0\d{8,9}$/.test(chiffres) ? chiffres : brut;
+}
+
+// Les numéros déjà enregistrés peuvent contenir des espaces, points, tirets ou « +213 » :
+// on les compare sans ces signes, sous la forme 0XXXXXXXXX, 213XXXXXXXXX ou 00213XXXXXXXXX.
+const TELEPHONE_SQL = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(telephone, ' ', ''), '.', ''), '-', ''), '+', ''), '/', '')";
+function conditionTelephone(valeur) {
+    const tel = normaliserTelephone(valeur);
+    if (!/^0\d{8,9}$/.test(tel)) return { sql: 'telephone = ?', params: [tel] };
+    const sans0 = tel.slice(1);
+    return { sql: `(telephone = ? OR ${TELEPHONE_SQL} IN (?, ?, ?))`, params: [String(valeur ?? '').trim(), tel, '213' + sans0, '00213' + sans0] };
+}
+
+// ============================================================
 // INSCRIPTION
 // ============================================================
 router.post('/inscription',  inscriptionLimiter,  [
     body('nom_complet').notEmpty().withMessage('Nom complet requis'),
-    body('email').isEmail().withMessage('Email invalide'),
+    body('email').custom(v => emailOuNull(v) === null || EMAIL_VALIDE.test(emailOuNull(v))).withMessage('Email invalide'),
     body('telephone').notEmpty().withMessage('Téléphone requis'),
    body('mot_de_passe')
         .isLength({ min: 8 })
@@ -73,9 +104,16 @@ router.post('/inscription',  inscriptionLimiter,  [
     const db = req.app.get('db');
 
     try {
+        // ⭐ Clé des jetons vérifiée AVANT de créer le compte : si JWT_SECRET manque sur Render,
+        //    l'inscription échoue proprement au lieu de créer un compte sans pouvoir répondre
+        const cle = cleJWT();
+
+        const emailPropre = emailOuNull(email);
+        const telephonePropre = normaliserTelephone(telephone);
+        const condTel = conditionTelephone(telephonePropre);
         const [existing] = await db.query(
-            'SELECT id FROM utilisateurs WHERE email = ? OR telephone = ?',
-            [email, telephone]
+            `SELECT id FROM utilisateurs WHERE ${emailPropre ? 'email = ? OR ' : ''}${condTel.sql}`,
+            [...(emailPropre ? [emailPropre] : []), ...condTel.params]
         );
         if (existing.length > 0) {
             return res.status(409).json({ message: 'Email ou téléphone déjà utilisé' });
@@ -95,7 +133,7 @@ router.post('/inscription',  inscriptionLimiter,  [
                 credits, abonnement_statut, abonnement_date_fin
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                nom_complet, email, telephone, mot_de_passe_hash, profil, wilaya,
+                nom_complet, emailPropre, telephonePropre, mot_de_passe_hash, profil, wilaya,
                 specialite || null, experience || null, tranche_horaire || null, salaire_souhaite || null,
                 type_remuneration || null, securite_sociale || null,
                  registre_commerce || null, qualification || null,
@@ -109,8 +147,8 @@ router.post('/inscription',  inscriptionLimiter,  [
         );
 
         const token = jwt.sign(
-            { id: result.insertId, email, profil },
-            cleJWT(),
+            { id: result.insertId, email: emailPropre, profil },
+            cle,
             { expiresIn: '7d' }
         );
 
@@ -126,7 +164,7 @@ router.post('/inscription',  inscriptionLimiter,  [
             utilisateur: newUser[0]
         });
     } catch (error) {
-        console.error(error);
+        console.error('Erreur inscription:', error.code || '', error.message);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
@@ -147,17 +185,24 @@ router.post('/connexion', loginLimiter,  [
     const db = req.app.get('db');
 
     try {
-        const [users] = await db.query(
-            `SELECT * FROM utilisateurs WHERE email = ? OR telephone = ?`,
-            [identifiant, identifiant]
-        );
+        const ident = String(identifiant).trim();
+        let users;
+        if (ident.includes('@')) {
+            [users] = await db.query(`SELECT * FROM utilisateurs WHERE email = ?`, [ident]);
+        } else {
+            const condTel = conditionTelephone(ident);
+            [users] = await db.query(`SELECT * FROM utilisateurs WHERE ${condTel.sql}`, condTel.params);
+        }
         if (users.length === 0) {
             return res.status(401).json({ message: 'Identifiants incorrects' });
         }
 
-        const user = users[0];
-        const match = await bcrypt.compare(mot_de_passe, user.mot_de_passe);
-        if (!match) {
+        // ⭐ Si un ancien numéro existe en double (écrit de deux façons), on garde le compte dont le mot de passe correspond
+        let user = null;
+        for (const candidat of users) {
+            if (await bcrypt.compare(mot_de_passe, candidat.mot_de_passe)) { user = candidat; break; }
+        }
+        if (!user) {
             return res.status(401).json({ message: 'Identifiants incorrects' });
         }
 
@@ -247,7 +292,10 @@ router.get('/me', authenticateToken, async (req, res) => {
 router.put('/me', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
     const userId = req.user.id;
-    const updates = req.body;
+    const updates = { ...(req.body || {}) };
+    // ⭐ Email facultatif : vide = pas d'email. Téléphone : même écriture qu'à l'inscription.
+    if (updates.email !== undefined) updates.email = emailOuNull(updates.email);
+    if (updates.telephone !== undefined && updates.telephone !== null) updates.telephone = normaliserTelephone(updates.telephone);
     
     // Champs autorisés à être modifiés
     const allowedFields = [
@@ -283,16 +331,19 @@ router.put('/me', authenticateToken, async (req, res) => {
     try {
         // ⭐ Email et téléphone : valides et pas déjà pris par un autre compte
         //    (avant : deux comptes pouvaient avoir le même email, et la connexion tombait sur le mauvais)
-        if (updates.email !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(updates.email))) {
+        if (updates.email && !EMAIL_VALIDE.test(updates.email)) {
             return res.status(400).json({ message: 'Email invalide' });
         }
-        if (updates.telephone !== undefined && String(updates.telephone).trim() === '') {
+        if (updates.telephone !== undefined && String(updates.telephone ?? '').trim() === '') {
             return res.status(400).json({ message: 'Téléphone requis' });
         }
-        if (updates.email !== undefined || updates.telephone !== undefined) {
+        const conditions = [], params = [];
+        if (updates.email) { conditions.push('email = ?'); params.push(updates.email); }
+        if (updates.telephone) { const c = conditionTelephone(updates.telephone); conditions.push(c.sql); params.push(...c.params); }
+        if (conditions.length) {
             const [pris] = await db.query(
-                'SELECT id FROM utilisateurs WHERE (email = ? OR telephone = ?) AND id <> ?',
-                [updates.email ?? null, updates.telephone ?? null, userId]
+                `SELECT id FROM utilisateurs WHERE (${conditions.join(' OR ')}) AND id <> ?`,
+                [...params, userId]
             );
             if (pris.length > 0) {
                 return res.status(409).json({ message: 'Email ou téléphone déjà utilisé' });

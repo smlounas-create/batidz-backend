@@ -1,14 +1,18 @@
 -- ============================================================
--- BatiDZ — Annonces de formation (organismes de formation)
+-- BatiDZ — Annonces de formation (organismes de formation) + email facultatif
 -- À lancer dans phpMyAdmin (Clever Cloud) AVANT de pousser le serveur.
+-- Peut être relancé : les tables déjà créées ne sont pas touchées.
 -- ============================================================
+
+-- 0. Email facultatif pour tous les profils (on se connecte aussi avec son téléphone)
+ALTER TABLE utilisateurs MODIFY email VARCHAR(255) NULL;
 
 -- 1. Nouveau profil « organisme_formation » : la colonne profil accepte désormais ce nom
 --    (les profils existants ne changent pas)
 ALTER TABLE utilisateurs MODIFY profil VARCHAR(30) NOT NULL;
 
 -- 2. Les annonces de formation
-CREATE TABLE formations (
+CREATE TABLE IF NOT EXISTS formations (
   id INT AUTO_INCREMENT PRIMARY KEY,
   utilisateur_id INT NULL,                         -- organisme qui l'a publiée (vide si saisie par l'administrateur)
   cree_par INT NULL,                               -- compte qui l'a saisie
@@ -39,7 +43,7 @@ CREATE TABLE formations (
 );
 
 -- 3. Les personnes intéressées (« Je suis intéressé »), une seule fois par personne et par formation
-CREATE TABLE formation_interets (
+CREATE TABLE IF NOT EXISTS formation_interets (
   id INT AUTO_INCREMENT PRIMARY KEY,
   formation_id INT NOT NULL,
   utilisateur_id INT NOT NULL,
@@ -49,6 +53,7 @@ CREATE TABLE formation_interets (
 );
 
 -- 4. Un paiement peut régler la parution d'une formation
+--    (si phpMyAdmin répond « Duplicate column name 'formation_id' », cette étape était déjà faite : tout est prêt)
 ALTER TABLE paiements
   ADD COLUMN formation_id INT NULL,
   ADD INDEX idx_paiements_formation (formation_id);
