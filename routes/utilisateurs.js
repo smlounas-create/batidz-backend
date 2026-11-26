@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const authenticateToken = require('../middleware/auth');
 const { exigerAbonnement } = require('../middleware/abonnement');
+const { organismeEnRelation } = require('./formations');
 // ============================================================
 // ⭐ NOUVEAU : COMPTER LES FOURNISSEURS (pour le badge header)
 // ============================================================
@@ -104,6 +105,10 @@ router.get('/:id', authenticateToken, exigerAbonnement, async (req, res) => {
     const userId = req.params.id;
 
     try {
+        // ⭐ Organisme de formation : pas d'accès aux fiches des membres (sauf personnes en relation avec lui)
+        if (req.user && req.user.profil === 'organisme_formation' && !(await organismeEnRelation(db, req.user.id, userId))) {
+            return res.status(403).json({ message: 'Réservé aux professionnels du BTPH' });
+        }
         const [users] = await db.query(
             // ⭐ Fiche visible par tout utilisateur connecté : plus de numéro de sécurité sociale
             //    (avant : il était envoyé à n'importe qui). La photo est ajoutée pour l'en-tête de la messagerie.

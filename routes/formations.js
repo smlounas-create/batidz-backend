@@ -522,7 +522,25 @@ router.get('/:id/interets', authenticateToken, async (req, res) => {
     }
 });
 
+// ⭐ Un organisme de formation n'a pas accès aux profils des membres de BatiDZ.
+//    Il ne voit la fiche (téléphone, email) et ne peut écrire qu'aux administrateurs, aux personnes
+//    qui se sont dites intéressées par une de ses formations, ou à celles avec qui il échange déjà.
+async function organismeEnRelation(db, organismeId, membreId) {
+    if (Number(organismeId) === Number(membreId)) return true;
+    const [admin] = await db.query('SELECT est_admin FROM utilisateurs WHERE id = ?', [membreId]);
+    if (admin[0] && Number(admin[0].est_admin) === 1) return true;
+    const [interet] = await db.query(
+        `SELECT 1 FROM formation_interets fi JOIN formations f ON f.id = fi.formation_id
+         WHERE f.utilisateur_id = ? AND fi.utilisateur_id = ? LIMIT 1`, [organismeId, membreId]);
+    if (interet.length) return true;
+    const [echange] = await db.query(
+        `SELECT 1 FROM messages WHERE (expediteur_id = ? AND destinataire_id = ?) OR (expediteur_id = ? AND destinataire_id = ?) LIMIT 1`,
+        [organismeId, membreId, membreId, organismeId]);
+    return echange.length > 0;
+}
+
 module.exports = router;
+module.exports.organismeEnRelation = organismeEnRelation;
 module.exports.ajouterParution = ajouterParution;
 module.exports.publierSiPrete = publierSiPrete;
 module.exports.lireChampsFormation = lireChampsFormation;

@@ -6,6 +6,7 @@ const { creerNotification } = require('./notifications');
 
 // ⭐ Entrepreneur sans abonnement (ni essai en cours) : accès refusé à ces routes
 const { exigerAbonnement } = require('../middleware/abonnement');
+const { organismeEnRelation } = require('./formations');
 router.use(exigerAbonnement);
 
 // ============================================================
@@ -87,6 +88,10 @@ router.post('/', authenticateToken, async (req, res) => {
         const [dest] = await db.query('SELECT id FROM utilisateurs WHERE id = ?', [destinataire_id]);
         if (dest.length === 0) {
             return res.status(404).json({ message: 'Destinataire introuvable' });
+        }
+        // ⭐ Organisme de formation : il n'écrit qu'aux personnes en relation avec lui (et aux administrateurs)
+        if (req.user.profil === 'organisme_formation' && !(await organismeEnRelation(db, expediteurId, destinataire_id))) {
+            return res.status(403).json({ message: 'Réservé aux professionnels du BTPH' });
         }
 
         // ⭐ On inclut annonce_id dans l'insertion (s'il existe, sinon NULL)
