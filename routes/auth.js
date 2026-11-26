@@ -52,7 +52,8 @@ router.post('/inscription',  inscriptionLimiter,  [
         .withMessage('Le mot de passe doit contenir au moins 1 majuscule')
         .matches(/[0-9]/)
         .withMessage('Le mot de passe doit contenir au moins 1 chiffre'),
-    body('profil').isIn(['entrepreneur', 'ouvrier', 'fournisseur_materiel', 'fournisseur_materiaux'])
+    // ⭐ « organisme_formation » : organismes qui publient des annonces de formation (routes/formations.js)
+    body('profil').isIn(['entrepreneur', 'ouvrier', 'fournisseur_materiel', 'fournisseur_materiaux', 'organisme_formation'])
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

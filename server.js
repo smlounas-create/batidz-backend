@@ -157,6 +157,10 @@ app.use('/api/messages', messageRoutes);
 const paiementRoutes = require('./routes/paiements');
 app.use('/api/paiements', paiementRoutes);
 
+// ⭐ Annonces de formation (organismes de formation, page « Formations », encarts, personnes intéressées)
+const formationRoutes = require('./routes/formations');
+app.use('/api/formations', formationRoutes);
+
 // ============================================================
 // 4. GESTION DES ERREURS
 // ============================================================
@@ -179,4 +183,4 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Serveur démarré sur le port ${PORT}`);
     console.log(`📍 URL: https://batidz-backend-github.onrender.com`);
     console.log(`📊 Health check: https://batidz-backend-github.onrender.com/health`);
-});
+});

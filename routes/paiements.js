@@ -10,7 +10,8 @@
 //    PAIEMENT_TITULAIRE, PAIEMENT_CCP, PAIEMENT_BARIDIMOB (affichés aux clients qui paient par virement CCP / BaridiMob),
 //    PAIEMENT_BANQUE_NOM, PAIEMENT_BANQUE_RIB, PAIEMENT_BANQUE_TITULAIRE (virement bancaire compte à compte ;
 //    sans PAIEMENT_BANQUE_TITULAIRE, c'est PAIEMENT_TITULAIRE qui est affiché),
-//    CHARGILY_SECRET_KEY (sans elle, la carte n'est pas proposée), CHARGILY_MODE (« test » ou « live »).
+//    CHARGILY_SECRET_KEY (sans elle, la carte n'est pas proposée), CHARGILY_MODE (« test » ou « live »),
+//    PRIX_FORMATION_SEMAINE, PRIX_FORMATION_MOIS (parution d'une annonce de formation ; sans eux, elle ne peut pas être payée).
 // ============================================================
 
 const express = require('express');
@@ -19,6 +20,7 @@ const router = express.Router();
 const authenticateToken = require('../middleware/auth');
 const { abonnementActif } = require('../middleware/abonnement');
 const { creerNotification } = require('./notifications');
+const { ajouterParution, publierSiPrete, PARUTION_MAX } = require('./formations');
 
 const MOYENS_MANUELS = ['ccp', 'baridimob', 'banque'];
 const CREDITS_MAX_PAR_ACHAT = 50;
@@ -39,6 +41,10 @@ function tarifs() {
         abonnement: {
             mensuel: entier(process.env.PRIX_ABONNEMENT_MENSUEL),
             annuel: entier(process.env.PRIX_ABONNEMENT_ANNUEL)
+        },
+        formation: {
+            semaine: entier(process.env.PRIX_FORMATION_SEMAINE),
+            mois: entier(process.env.PRIX_FORMATION_MOIS)
         },
         comptes: {
             titulaire: process.env.PAIEMENT_TITULAIRE || null,
@@ -68,6 +74,15 @@ function calculerAchat(profil, { objet, formule, quantite }) {
         if (!prix) return { erreur: 'Le prix de l\'abonnement n\'est pas encore fixé' };
         return { objet, formule, quantite: 1, montant: prix };
     }
+    if (objet === 'formation') {
+        if (profil !== 'organisme_formation') return { erreur: 'La parution est réservée aux organismes de formation' };
+        if (!['semaine', 'mois'].includes(formule)) return { erreur: 'Durée de parution invalide' };
+        const q = Number(quantite);
+        if (!Number.isInteger(q) || q < 1 || q > PARUTION_MAX) return { erreur: 'Durée de parution invalide' };
+        const prix = t.formation[formule];
+        if (!prix) return { erreur: 'Le prix de la parution n\'est pas encore fixé' };
+        return { objet, formule, quantite: q, montant: q * prix };
+    }
     return { erreur: 'Achat invalide' };
 }
 
@@ -78,6 +93,15 @@ function adresseRetour(req) {
     const demandee = typeof req.body.retour === 'string' ? req.body.retour.split('?')[0].split('#')[0] : '';
     if (origine && demandee.startsWith(origine + '/')) return demandee;
     return (process.env.SITE_URL || origine).replace(/\/$/, '') + '/';
+}
+
+// Parution : la formation doit appartenir à l'organisme et ne pas être refusée
+async function formationAPayer(db, userId, formationId) {
+    const [rows] = await db.query('SELECT id, utilisateur_id, statut, titre FROM formations WHERE id = ?', [formationId]);
+    const f = rows[0];
+    if (!f || Number(f.utilisateur_id) !== Number(userId)) return { erreur: 'Formation non trouvée' };
+    if (f.statut === 'refusee') return { erreur: 'Cette formation a été refusée : modifiez-la avant de payer sa parution' };
+    return { formation: f };
 }
 
 async function utilisateurConnecte(db, id) {
@@ -105,11 +129,18 @@ async function appliquerPaiement(db, paiement, nouveauStatut, adminId = null) {
              WHERE id = ?`,
             [paiement.utilisateur_id]
         );
+    } else if (paiement.objet === 'formation' && paiement.formation_id) {
+        await ajouterParution(db, paiement.formation_id, paiement.formule, paiement.quantite);
+        // ⭐ Reçu validé par l'administrateur : il a vu l'annonce, elle est validée en même temps
+        if (adminId) await db.query(`UPDATE formations SET statut = 'validee', motif_refus = NULL WHERE id = ? AND statut = 'a_valider'`, [paiement.formation_id]);
     }
     try {
         await creerNotification(db, paiement.utilisateur_id, 'paiement_valide', '✅ Paiement validé',
             `Votre paiement de ${paiement.montant} DA a été validé.`, 'page-paiement', paiement.id);
     } catch (e) {}
+    if (paiement.objet === 'formation' && paiement.formation_id) {
+        try { await publierSiPrete(db, paiement.formation_id); } catch (e) { console.error('Erreur publication formation:', e); }
+    }
     return true;
 }
 
@@ -144,11 +175,20 @@ router.get('/mon-compte', authenticateToken, async (req, res) => {
         );
         if (rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
         const [paiements] = await db.query(
-            `SELECT id, objet, formule, quantite, montant, moyen, statut, reference, motif_refus, date_creation, date_traitement
-             FROM paiements WHERE utilisateur_id = ? ORDER BY date_creation DESC LIMIT 50`,
+            `SELECT p.id, p.objet, p.formule, p.quantite, p.montant, p.moyen, p.statut, p.reference, p.motif_refus, p.date_creation, p.date_traitement,
+                    p.formation_id, f.titre AS formation_titre
+             FROM paiements p LEFT JOIN formations f ON f.id = p.formation_id
+             WHERE p.utilisateur_id = ? ORDER BY p.date_creation DESC LIMIT 50`,
             [req.user.id]
         );
         const u = rows[0];
+        let formations;
+        if (u.profil === 'organisme_formation') {
+            [formations] = await db.query(
+                'SELECT id, titre, statut, date_fin_parution FROM formations WHERE utilisateur_id = ? ORDER BY date_creation DESC',
+                [req.user.id]
+            );
+        }
         res.json({
             profil: u.profil,
             credits: u.credits || 0,
@@ -156,7 +196,8 @@ router.get('/mon-compte', authenticateToken, async (req, res) => {
             abonnement_date_fin: u.abonnement_date_fin,
             abonnement_actif: u.profil === 'entrepreneur' ? await abonnementActif(db, req.user.id) : null,
             est_admin: Number(u.est_admin) === 1,
-            paiements
+            paiements,
+            ...(formations ? { formations } : {})
         });
     } catch (error) {
         console.error('Erreur GET /paiements/mon-compte:', error);
@@ -169,7 +210,7 @@ router.get('/mon-compte', authenticateToken, async (req, res) => {
 // ============================================================
 router.post('/demande', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
-    const { objet, formule, quantite, moyen, reference, recu } = req.body;
+    const { objet, formule, quantite, moyen, reference, recu, formation_id } = req.body;
     try {
         const user = await utilisateurConnecte(db, req.user.id);
         if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
@@ -179,12 +220,18 @@ router.post('/demande', authenticateToken, async (req, res) => {
         }
         const achat = calculerAchat(user.profil, { objet, formule, quantite });
         if (achat.erreur) return res.status(400).json({ message: achat.erreur });
+        let formationId = null;
+        if (achat.objet === 'formation') {
+            const verif = await formationAPayer(db, user.id, formation_id);
+            if (verif.erreur) return res.status(400).json({ message: verif.erreur });
+            formationId = verif.formation.id;
+        }
 
         const [result] = await db.query(
-            `INSERT INTO paiements (utilisateur_id, objet, formule, quantite, montant, moyen, statut, recu, reference)
-             VALUES (?, ?, ?, ?, ?, ?, 'en_attente', ?, ?)`,
+            `INSERT INTO paiements (utilisateur_id, objet, formule, quantite, montant, moyen, statut, recu, reference, formation_id)
+             VALUES (?, ?, ?, ?, ?, ?, 'en_attente', ?, ?, ?)`,
             [user.id, achat.objet, achat.formule, achat.quantite, achat.montant, moyen, recu,
-             reference ? String(reference).trim().slice(0, 100) : null]
+             reference ? String(reference).trim().slice(0, 100) : null, formationId]
         );
         await prevenirAdministrateurs(db, user.nom_complet, achat.montant, result.insertId);
         res.status(201).json({ message: 'Reçu envoyé', id: result.insertId, montant: achat.montant });
@@ -199,7 +246,7 @@ router.post('/demande', authenticateToken, async (req, res) => {
 // ============================================================
 router.post('/carte', authenticateToken, async (req, res) => {
     const db = req.app.get('db');
-    const { objet, formule, quantite, carte, langue } = req.body;
+    const { objet, formule, quantite, carte, langue, formation_id } = req.body;
     const cle = process.env.CHARGILY_SECRET_KEY;
     if (!cle || typeof fetch !== 'function') return res.status(400).json({ message: 'Le paiement par carte n\'est pas encore disponible' });
     try {
@@ -207,11 +254,18 @@ router.post('/carte', authenticateToken, async (req, res) => {
         if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
         const achat = calculerAchat(user.profil, { objet, formule, quantite });
         if (achat.erreur) return res.status(400).json({ message: achat.erreur });
+        let formationId = null, formationTitre = '';
+        if (achat.objet === 'formation') {
+            const verif = await formationAPayer(db, user.id, formation_id);
+            if (verif.erreur) return res.status(400).json({ message: verif.erreur });
+            formationId = verif.formation.id;
+            formationTitre = verif.formation.titre;
+        }
 
         const [result] = await db.query(
-            `INSERT INTO paiements (utilisateur_id, objet, formule, quantite, montant, moyen, statut)
-             VALUES (?, ?, ?, ?, ?, 'carte', 'en_attente')`,
-            [user.id, achat.objet, achat.formule, achat.quantite, achat.montant]
+            `INSERT INTO paiements (utilisateur_id, objet, formule, quantite, montant, moyen, statut, formation_id)
+             VALUES (?, ?, ?, ?, ?, 'carte', 'en_attente', ?)`,
+            [user.id, achat.objet, achat.formule, achat.quantite, achat.montant, formationId]
         );
         const paiementId = result.insertId;
 
@@ -229,7 +283,9 @@ router.post('/carte', authenticateToken, async (req, res) => {
                 failure_url: `${retour}?paiement=echec`,
                 webhook_endpoint: `${api}/api/paiements/webhook/chargily`,
                 locale: langue === 'ar' ? 'ar' : 'fr',
-                description: achat.objet === 'credits' ? `BatiDZ — ${achat.quantite} crédit(s)` : `BatiDZ — abonnement ${achat.formule}`,
+                description: achat.objet === 'credits' ? `BatiDZ — ${achat.quantite} crédit(s)`
+                    : achat.objet === 'formation' ? `BatiDZ — parution « ${String(formationTitre).slice(0, 80)} » : ${achat.quantite} ${achat.formule === 'mois' ? 'mois' : 'semaine(s)'}`
+                    : `BatiDZ — abonnement ${achat.formule}`,
                 metadata: { paiement_id: String(paiementId) }
             })
         });
@@ -306,8 +362,8 @@ router.get('/admin/en-attente', authenticateToken, exigerAdmin, async (req, res)
     try {
         const [paiements] = await db.query(
             `SELECT p.id, p.objet, p.formule, p.quantite, p.montant, p.moyen, p.reference, p.recu, p.date_creation,
-                    u.nom_complet, u.profil, u.telephone, u.email
-             FROM paiements p JOIN utilisateurs u ON u.id = p.utilisateur_id
+                    u.nom_complet, u.profil, u.telephone, u.email, p.formation_id, f.titre AS formation_titre
+             FROM paiements p JOIN utilisateurs u ON u.id = p.utilisateur_id LEFT JOIN formations f ON f.id = p.formation_id
              WHERE p.statut = 'en_attente' AND p.moyen IN ('ccp', 'baridimob', 'banque')
              ORDER BY p.date_creation ASC`
         );
