@@ -380,3 +380,6 @@ router.put('/me', authenticateToken, async (req, res) => {
 // EXPORTER LE ROUTER
 // ============================================================
 module.exports = router;
+// ⭐ Recherche d'un membre par téléphone (utilisée aussi par routes/admin.js)
+module.exports.conditionTelephone = conditionTelephone;
+module.exports.normaliserTelephone = normaliserTelephone;

@@ -9,7 +9,10 @@
 const express = require('express');
 const router = express.Router();
 const authenticateToken = require('../middleware/auth');
+const bcrypt = require('bcryptjs');
 const { tarifs, coordonneesSite } = require('./paiements');
+const { creerNotification } = require('./notifications');
+const { conditionTelephone } = require('./auth');
 
 async function exigerAdmin(req, res, next) {
     try {
@@ -68,6 +71,93 @@ router.get('/tableau-de-bord', authenticateToken, exigerAdmin, async (req, res) 
         });
     } catch (error) {
         console.error('Erreur GET /admin/tableau-de-bord:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// ⭐ Équipe d'administration : nommer un administrateur ou lui retirer les droits,
+//    depuis le tableau de bord (plus besoin de phpMyAdmin).
+//    - On cherche le membre par son numéro de téléphone (il doit déjà être inscrit).
+//    - Il garde son profil (entrepreneur, ouvrier…) : on ne change que est_admin.
+//    - Le mot de passe de l'administrateur qui agit est exigé.
+//    - On ne peut pas se retirer ses propres droits : il reste toujours au moins un administrateur.
+//    - Tous les administrateurs, et la personne concernée, sont prévenus.
+// ============================================================
+router.get('/administrateurs', authenticateToken, exigerAdmin, async (req, res) => {
+    try {
+        const [rows] = await req.app.get('db').query(
+            'SELECT id, nom_complet, telephone, profil FROM utilisateurs WHERE est_admin = 1 ORDER BY nom_complet');
+        res.json(rows);
+    } catch (error) {
+        console.error('Erreur GET /admin/administrateurs:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+router.get('/membre', authenticateToken, exigerAdmin, async (req, res) => {
+    const telephone = String(req.query.telephone || '').trim();
+    if (telephone.replace(/\D/g, '').length < 9) return res.status(400).json({ message: 'Numéro de téléphone invalide' });
+    try {
+        const cond = conditionTelephone(telephone);
+        const [rows] = await req.app.get('db').query(
+            `SELECT id, nom_complet, telephone, profil, wilaya, est_admin FROM utilisateurs WHERE ${cond.sql} LIMIT 5`, cond.params);
+        if (!rows.length) return res.status(404).json({ message: 'Aucun membre avec ce numéro' });
+        res.json(rows.map(r => ({ ...r, est_admin: Number(r.est_admin) === 1 })));
+    } catch (error) {
+        console.error('Erreur GET /admin/membre:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+router.put('/administrateurs/:id', authenticateToken, exigerAdmin, async (req, res) => {
+    const db = req.app.get('db');
+    const corps = req.body || {};
+    const id = Number(req.params.id);
+    const nommer = corps.admin === true;
+    if (!Number.isInteger(id) || id <= 0 || typeof corps.admin !== 'boolean') return res.status(400).json({ message: 'Demande invalide' });
+    try {
+        const [moi] = await db.query('SELECT id, nom_complet, mot_de_passe FROM utilisateurs WHERE id = ?', [req.user.id]);
+        if (!moi[0] || typeof corps.mot_de_passe !== 'string' || !(await bcrypt.compare(corps.mot_de_passe, moi[0].mot_de_passe))) {
+            return res.status(401).json({ message: 'Mot de passe incorrect' });
+        }
+        if (!nommer && id === Number(moi[0].id)) return res.status(400).json({ message: 'Vous ne pouvez pas retirer vos propres droits' });
+
+        const [cible] = await db.query('SELECT id, nom_complet, profil, est_admin FROM utilisateurs WHERE id = ?', [id]);
+        const membre = cible[0];
+        if (!membre) return res.status(404).json({ message: 'Membre introuvable' });
+        if (nommer && membre.profil === 'organisme_formation') return res.status(400).json({ message: 'Un organisme de formation ne peut pas être administrateur' });
+        if (!nommer && membre.profil === 'administrateur') return res.status(400).json({ message: 'Ce compte n\'a pas d\'autre profil : retirez ses droits dans phpMyAdmin' });
+        if ((Number(membre.est_admin) === 1) === nommer) {
+            return res.status(400).json({ message: nommer ? 'Ce membre est déjà administrateur' : 'Ce membre n\'est pas administrateur' });
+        }
+
+        await db.query('UPDATE utilisateurs SET est_admin = ? WHERE id = ?', [nommer ? 1 : 0, id]);
+        console.log(`Administrateur ${nommer ? 'nommé' : 'retiré'} : utilisateur ${id}, par l'utilisateur ${moi[0].id}`);
+
+        try {
+            if (nommer) {
+                await creerNotification(db, id, 'admin_nomme', '🛡️ Vous êtes administrateur',
+                    `${moi[0].nom_complet} vous a nommé administrateur de BatiDZ.`, 'page-admin', null);
+            } else {
+                await creerNotification(db, id, 'admin_retire', '🛡️ Droits d\'administrateur retirés',
+                    `${moi[0].nom_complet} vous a retiré les droits d'administrateur de BatiDZ.`, null, null);
+            }
+            const [admins] = await db.query('SELECT id FROM utilisateurs WHERE est_admin = 1');
+            for (const a of admins) {
+                if (Number(a.id) === id) continue;
+                await creerNotification(db, a.id, 'equipe_admin',
+                    nommer ? '🛡️ Nouvel administrateur' : '🛡️ Administrateur retiré',
+                    nommer ? `${moi[0].nom_complet} a nommé ${membre.nom_complet} administrateur.`
+                           : `${moi[0].nom_complet} a retiré les droits d'administrateur à ${membre.nom_complet}.`,
+                    'page-admin', null);
+            }
+        } catch (e) { console.error('Erreur notification équipe administrateur:', e); }
+
+        const [liste] = await db.query('SELECT id, nom_complet, telephone, profil FROM utilisateurs WHERE est_admin = 1 ORDER BY nom_complet');
+        res.json({ message: nommer ? 'Administrateur nommé' : 'Droits retirés', administrateurs: liste });
+    } catch (error) {
+        console.error('Erreur PUT /admin/administrateurs/:id:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });
