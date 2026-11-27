@@ -411,6 +411,8 @@ const chiffres = (v) => String(v).replace(/\D/g, '');
 // Contrôle d'un champ ; renvoie un message d'erreur, ou null si la valeur est acceptable
 function erreurCoordonnee(champ, valeur) {
     if (valeur.length > 100) return 'Valeur trop longue';
+    // Un nom ne contient pas « @ » : signe d'un remplissage automatique du navigateur
+    if (['titulaire', 'banque_titulaire', 'banque_nom'].includes(champ) && valeur.includes('@')) return 'Ce champ attend un nom, pas une adresse email';
     if (champ === 'ccp') {
         if (!/^[0-9A-Za-zéÉ .:\-\/]+$/.test(valeur) || chiffres(valeur).length < 6 || chiffres(valeur).length > 14) {
             return 'Numéro CCP invalide : le numéro du compte et sa clé, en chiffres';
