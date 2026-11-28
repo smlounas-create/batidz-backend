@@ -51,6 +51,11 @@ router.get('/tableau-de-bord', authenticateToken, exigerAdmin, async (req, res) 
         const abonnes = await lire(db, "SELECT COUNT(*) AS n FROM utilisateurs WHERE profil = 'entrepreneur' AND abonnement_date_fin IS NOT NULL AND DATE(abonnement_date_fin) >= CURDATE()");
         const parProfil = await lire(db, 'SELECT profil, COUNT(*) AS n FROM utilisateurs GROUP BY profil');
         const mois = await lire(db, "SELECT COUNT(*) AS nombre, COALESCE(SUM(montant), 0) AS montant FROM paiements WHERE statut = 'valide' AND date_traitement >= DATE_FORMAT(CURDATE(), '%Y-%m-01')");
+        // ⭐ D'où viennent les inscrits des 30 derniers jours, et qui invite le plus
+        const sources = await lire(db, "SELECT COALESCE(source_inscription, 'non_renseigne') AS source, COUNT(*) AS n FROM utilisateurs WHERE date_creation >= NOW() - INTERVAL 30 DAY GROUP BY COALESCE(source_inscription, 'non_renseigne') ORDER BY n DESC");
+        const parrains = await lire(db, `SELECT p.id, p.nom_complet, p.profil, COUNT(f.id) AS invites, SUM(f.parrainage_recompense_le IS NOT NULL) AS actifs
+                                          FROM utilisateurs f JOIN utilisateurs p ON p.id = f.parrain_id
+                                          GROUP BY p.id, p.nom_complet, p.profil ORDER BY invites DESC LIMIT 5`);
 
         const inscrits = {};
         for (const r of parProfil || []) inscrits[r.profil] = Number(r.n) || 0;
@@ -69,6 +74,10 @@ router.get('/tableau-de-bord', authenticateToken, exigerAdmin, async (req, res) 
                 banque: !!t.comptes.banque_rib,
                 carte: !!t.carte,
                 variables_manquantes: VARIABLES_PRIX.filter(v => !process.env[v])
+            },
+            acquisition: {
+                sources: sources ? sources.map(r => ({ source: r.source, n: Number(r.n) || 0 })) : null,
+                parrains: parrains ? parrains.map(r => ({ id: r.id, nom_complet: r.nom_complet, profil: r.profil, invites: Number(r.invites) || 0, actifs: Number(r.actifs) || 0 })) : null
             }
         });
     } catch (error) {

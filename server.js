@@ -164,6 +164,8 @@ app.use('/api/formations', formationRoutes);
 // ⭐ Tableau de bord de l'administrateur (tâches à traiter, chiffres clés, réglages manquants)
 const adminRoutes = require('./routes/admin');
 app.use('/api/admin', adminRoutes);
+// ⭐ Parrainage : lien d'invitation et invités
+app.use('/api/parrainage', require('./routes/parrainage'));
 
 // ============================================================
 // 4. GESTION DES ERREURS

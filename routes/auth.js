@@ -39,6 +39,7 @@ const oubliLimiter = rateLimit({
     legacyHeaders: false
 });
 const { creerNotification } = require('./notifications');
+const { enregistrerParrainage } = require('./parrainage');
 
 // ============================================================
 // MIDDLEWARE D'AUTHENTIFICATION
@@ -155,6 +156,11 @@ router.post('/inscription',  inscriptionLimiter,  [
                 profil === 'entrepreneur' ? new Date(Date.now() + (parseInt(process.env.ESSAI_JOURS, 10) || 30) * 86400000) : null
             ]
         );
+
+        // ⭐ « Comment avez-vous connu BatiDZ ? » et parrain éventuel (n'empêche jamais l'inscription)
+        try {
+            await enregistrerParrainage(db, result.insertId, { source: req.body.source_inscription, parrainId: req.body.parrain_id });
+        } catch (e) { console.error('Erreur parrainage à l\'inscription:', e.message); }
 
         const token = jwt.sign(
             { id: result.insertId, email: emailPropre, profil },

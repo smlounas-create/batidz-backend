@@ -2,6 +2,10 @@ const express = require('express');
 const authenticateToken = require('../middleware/auth');
 const { abonnementActif, exigerAbonnement } = require('../middleware/abonnement');
 const { body, validationResult } = require('express-validator');
+const { tarifs } = require('./paiements');
+const { recompenserParrain } = require('./parrainage');
+// ⭐ Prix d'un crédit selon le profil (variables PRIX_CREDIT_* sur Render, comme la page de paiement)
+const prixCredit = (profil) => tarifs().credit[profil] || 0;
 
 const router = express.Router();
 
@@ -68,7 +72,7 @@ router.post('/', authenticateToken, [
                     message: 'Crédits insuffisants pour publier une annonce',
                     credits: user[0].credits,
                     solde: user[0].solde,
-                    cout: user[0].profil === 'ouvrier' ? 500 : 1000
+                    cout: prixCredit(user[0].profil)
                 });
             }
         }
@@ -129,7 +133,7 @@ router.post('/', authenticateToken, [
             creditsRestants = updatedUser[0].credits;
 
             // ⭐ 6. Enregistrer le paiement
-            const cout = user[0].profil === 'ouvrier' ? 500 : 1000;
+            const cout = prixCredit(user[0].profil);
             await db.query(
                 `INSERT INTO paiements_annonces 
                  (annonce_id, utilisateur_id, montant, statut, date_paiement) 
@@ -138,6 +142,8 @@ router.post('/', authenticateToken, [
             );
         }
   console.log('✅ Annonce créée avec succès !');
+        // ⭐ Première annonce d'un membre invité : son parrain est récompensé (une seule fois)
+        try { await recompenserParrain(db, req.user.id); } catch (e) { console.error('Erreur récompense parrainage:', e.message); }
         res.status(201).json({
             message: 'Annonce créée avec succès',
             annonce: newAnnonce[0],
