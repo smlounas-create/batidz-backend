@@ -13,6 +13,7 @@ const bcrypt = require('bcryptjs');
 const { tarifs, coordonneesSite } = require('./paiements');
 const { creerNotification } = require('./notifications');
 const { conditionTelephone } = require('./auth');
+const crypto = require('crypto');
 
 async function exigerAdmin(req, res, next) {
     try {
@@ -45,6 +46,7 @@ router.get('/tableau-de-bord', authenticateToken, exigerAdmin, async (req, res) 
     try {
         const recus = await lire(db, "SELECT COUNT(*) AS n FROM paiements WHERE statut = 'en_attente' AND moyen IN ('ccp', 'baridimob', 'banque')");
         const formations = await lire(db, "SELECT COUNT(*) AS n FROM formations WHERE statut = 'a_valider'");
+        const motsDePasse = await lire(db, "SELECT COUNT(*) AS n FROM demandes_mot_de_passe WHERE statut = 'en_attente'");
         const enLigne = await lire(db, "SELECT COUNT(*) AS n FROM formations WHERE statut = 'validee' AND date_fin_parution >= NOW()");
         const abonnes = await lire(db, "SELECT COUNT(*) AS n FROM utilisateurs WHERE profil = 'entrepreneur' AND abonnement_date_fin IS NOT NULL AND DATE(abonnement_date_fin) >= CURDATE()");
         const parProfil = await lire(db, 'SELECT profil, COUNT(*) AS n FROM utilisateurs GROUP BY profil');
@@ -55,7 +57,7 @@ router.get('/tableau-de-bord', authenticateToken, exigerAdmin, async (req, res) 
         const t = tarifs(await coordonneesSite(db));
 
         res.json({
-            a_traiter: { recus: nombre(recus), formations: nombre(formations) },
+            a_traiter: { recus: nombre(recus), formations: nombre(formations), mots_de_passe: nombre(motsDePasse) },
             chiffres: {
                 inscrits,
                 abonnements_actifs: nombre(abonnes),
@@ -158,6 +160,90 @@ router.put('/administrateurs/:id', authenticateToken, exigerAdmin, async (req, r
         res.json({ message: nommer ? 'Administrateur nommé' : 'Droits retirés', administrateurs: liste });
     } catch (error) {
         console.error('Erreur PUT /admin/administrateurs/:id:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// ============================================================
+// ⭐ Mots de passe oubliés : l'administrateur rappelle le membre au numéro inscrit,
+//    puis crée un mot de passe provisoire (8 chiffres, valable 48 h) qu'il lui donne
+//    par téléphone ou WhatsApp. Le membre devra choisir son propre mot de passe à la connexion.
+// ============================================================
+const DUREE_PROVISOIRE_MS = 48 * 60 * 60 * 1000;
+const tableAbsente = (e) => e && (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR');
+
+router.get('/mots-de-passe', authenticateToken, exigerAdmin, async (req, res) => {
+    try {
+        const [rows] = await req.app.get('db').query(
+            `SELECT d.id, d.date_creation, u.id AS utilisateur_id, u.nom_complet, u.telephone, u.email, u.profil, u.wilaya
+             FROM demandes_mot_de_passe d JOIN utilisateurs u ON u.id = d.utilisateur_id
+             WHERE d.statut = 'en_attente' ORDER BY d.date_creation ASC`);
+        res.json(rows);
+    } catch (error) {
+        if (tableAbsente(error)) return res.status(503).json({ message: 'Table demandes_mot_de_passe absente' });
+        console.error('Erreur GET /admin/mots-de-passe:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+router.post('/mots-de-passe/:id/provisoire', authenticateToken, exigerAdmin, async (req, res) => {
+    const db = req.app.get('db');
+    const id = Number(req.params.id);
+    const corps = req.body || {};
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: 'Demande invalide' });
+    try {
+        const [moi] = await db.query('SELECT id, nom_complet, mot_de_passe FROM utilisateurs WHERE id = ?', [req.user.id]);
+        if (!moi[0] || typeof corps.mot_de_passe !== 'string' || !(await bcrypt.compare(corps.mot_de_passe, moi[0].mot_de_passe))) {
+            return res.status(401).json({ message: 'Mot de passe incorrect' });
+        }
+        const [demandes] = await db.query(
+            `SELECT d.id, d.statut, d.utilisateur_id, u.nom_complet, u.telephone, u.est_admin
+             FROM demandes_mot_de_passe d JOIN utilisateurs u ON u.id = d.utilisateur_id WHERE d.id = ?`, [id]);
+        const d = demandes[0];
+        if (!d) return res.status(404).json({ message: 'Demande introuvable' });
+        if (d.statut !== 'en_attente') return res.status(400).json({ message: 'Demande déjà traitée' });
+
+        const provisoire = String(crypto.randomInt(0, 100000000)).padStart(8, '0');
+        const hash = await bcrypt.hash(provisoire, await bcrypt.genSalt(10));
+        const expire = new Date(Date.now() + DUREE_PROVISOIRE_MS);
+        await db.query('UPDATE utilisateurs SET mot_de_passe = ?, mdp_provisoire_expire = ? WHERE id = ?', [hash, expire, d.utilisateur_id]);
+        await db.query(
+            "UPDATE demandes_mot_de_passe SET statut = 'traitee', traitee_par = ?, date_traitement = NOW() WHERE utilisateur_id = ? AND statut = 'en_attente'",
+            [moi[0].id, d.utilisateur_id]);
+        console.log(`Mot de passe provisoire créé pour l'utilisateur ${d.utilisateur_id} par l'administrateur ${moi[0].id}`);
+
+        // Le compte d'un administrateur est sensible : les autres administrateurs sont prévenus
+        if (Number(d.est_admin) === 1) {
+            try {
+                const [admins] = await db.query('SELECT id FROM utilisateurs WHERE est_admin = 1');
+                for (const a of admins) {
+                    if (Number(a.id) === Number(moi[0].id) || Number(a.id) === Number(d.utilisateur_id)) continue;
+                    await creerNotification(db, a.id, 'equipe_admin', '🔑 Mot de passe d\'administrateur',
+                        `${moi[0].nom_complet} a créé un mot de passe provisoire pour ${d.nom_complet}.`, 'page-admin', null);
+                }
+            } catch (e) { console.error('Erreur notification mot de passe administrateur:', e); }
+        }
+        res.json({ mot_de_passe_provisoire: provisoire, expire, nom_complet: d.nom_complet, telephone: d.telephone });
+    } catch (error) {
+        if (tableAbsente(error)) return res.status(503).json({ message: 'Table demandes_mot_de_passe absente' });
+        console.error('Erreur POST /admin/mots-de-passe/:id/provisoire:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+router.post('/mots-de-passe/:id/annuler', authenticateToken, exigerAdmin, async (req, res) => {
+    const db = req.app.get('db');
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: 'Demande invalide' });
+    try {
+        const [r] = await db.query(
+            "UPDATE demandes_mot_de_passe SET statut = 'annulee', traitee_par = ?, date_traitement = NOW() WHERE id = ? AND statut = 'en_attente'",
+            [req.user.id, id]);
+        if (!r.affectedRows) return res.status(404).json({ message: 'Demande introuvable' });
+        res.json({ message: 'Demande annulée' });
+    } catch (error) {
+        if (tableAbsente(error)) return res.status(503).json({ message: 'Table demandes_mot_de_passe absente' });
+        console.error('Erreur POST /admin/mots-de-passe/:id/annuler:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 });

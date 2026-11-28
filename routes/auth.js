@@ -30,6 +30,16 @@ const inscriptionLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false
 });
+// ⭐ Mot de passe oublié : 3 demandes par heure et par adresse
+const oubliLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 3,
+    message: { message: 'Trop de demandes. Réessayez dans une heure.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+const { creerNotification } = require('./notifications');
+
 // ============================================================
 // MIDDLEWARE D'AUTHENTIFICATION
 // ⭐ Le même que pour toutes les autres routes (avant : une copie ici, avec une autre clé de secours)
@@ -205,6 +215,11 @@ router.post('/connexion', loginLimiter,  [
         if (!user) {
             return res.status(401).json({ message: 'Identifiants incorrects' });
         }
+        // ⭐ Mot de passe provisoire (donné par un administrateur) : valable 48 h, à remplacer dès la connexion
+        const provisoireExpire = user.mdp_provisoire_expire ? new Date(user.mdp_provisoire_expire) : null;
+        if (provisoireExpire && provisoireExpire.getTime() < Date.now()) {
+            return res.status(401).json({ message: 'Mot de passe provisoire expiré' });
+        }
 
         const token = jwt.sign(
             { id: user.id, email: user.email, profil: user.profil },
@@ -241,6 +256,7 @@ router.post('/connexion', loginLimiter,  [
                 abonnement_statut: user.abonnement_statut || null,
                 abonnement_date_fin: user.abonnement_date_fin || null,
                 est_admin: Number(user.est_admin) === 1,
+                mdp_a_changer: !!provisoireExpire,
                 abonnement_actif: user.profil === 'entrepreneur' ? await abonnementActif(db, user.id) : null
             }
         });
@@ -279,7 +295,13 @@ router.get('/me', authenticateToken, async (req, res) => {
         }
         
         // ⭐ abonnement_actif (1/0) : abonnement payé ou essai gratuit en cours — utile aux entrepreneurs
-        res.json(users[0]);
+        // ⭐ mdp_a_changer : connecté avec un mot de passe provisoire (colonne lue à part : mot_de_passe.sql pas encore lancé = false)
+        let mdpAChanger = false;
+        try {
+            const [m] = await db.query('SELECT mdp_provisoire_expire FROM utilisateurs WHERE id = ?', [req.user.id]);
+            mdpAChanger = !!(m[0] && m[0].mdp_provisoire_expire);
+        } catch (e) { if (e.code !== 'ER_BAD_FIELD_ERROR') console.error('Erreur GET /me (mot de passe provisoire):', e.message); }
+        res.json({ ...users[0], mdp_a_changer: mdpAChanger });
     } catch (error) {
         console.error('Erreur GET /me:', error);
         res.status(500).json({ message: 'Erreur serveur' });
@@ -376,6 +398,79 @@ router.put('/me', authenticateToken, async (req, res) => {
     }
     
 });
+// ============================================================
+// ⭐ MOT DE PASSE OUBLIÉ (traité par un administrateur)
+//    1. Le membre donne son téléphone (ou son email) : une demande est enregistrée et les
+//       administrateurs sont prévenus. La réponse est la même que le compte existe ou non,
+//       pour ne pas révéler qui est inscrit.
+//    2. Un administrateur rappelle le membre, puis crée un mot de passe provisoire (routes/admin.js).
+//    3. À la connexion, le membre doit choisir son propre mot de passe (PUT /mot-de-passe).
+// ============================================================
+router.post('/mot-de-passe-oublie', oubliLimiter, async (req, res) => {
+    const db = req.app.get('db');
+    const ident = String((req.body || {}).identifiant || '').trim();
+    if (!ident) return res.status(400).json({ message: 'Téléphone requis' });
+    const reponse = { message: 'Demande enregistrée' };
+    try {
+        let users;
+        if (ident.includes('@')) {
+            [users] = await db.query('SELECT id, nom_complet FROM utilisateurs WHERE email = ?', [ident]);
+        } else {
+            const condTel = conditionTelephone(ident);
+            [users] = await db.query(`SELECT id, nom_complet FROM utilisateurs WHERE ${condTel.sql}`, condTel.params);
+        }
+        for (const u of users) {
+            const [deja] = await db.query("SELECT id FROM demandes_mot_de_passe WHERE utilisateur_id = ? AND statut = 'en_attente' LIMIT 1", [u.id]);
+            if (deja.length) continue;
+            await db.query('INSERT INTO demandes_mot_de_passe (utilisateur_id) VALUES (?)', [u.id]);
+            console.log(`Mot de passe oublié : demande pour l'utilisateur ${u.id}`);
+            try {
+                const [admins] = await db.query('SELECT id FROM utilisateurs WHERE est_admin = 1');
+                for (const a of admins) {
+                    if (Number(a.id) === Number(u.id)) continue;
+                    await creerNotification(db, a.id, 'mdp_oublie', '🔑 Mot de passe oublié',
+                        `${u.nom_complet} demande un nouveau mot de passe.`, 'page-admin-mdp', null);
+                }
+            } catch (e) { console.error('Erreur notification mot de passe oublié:', e); }
+        }
+        res.json(reponse);
+    } catch (error) {
+        if (error && error.code === 'ER_NO_SUCH_TABLE') return res.status(503).json({ message: 'Service momentanément indisponible' });
+        console.error('Erreur POST /mot-de-passe-oublie:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
+// Changer son mot de passe (obligatoire après un mot de passe provisoire)
+router.put('/mot-de-passe', authenticateToken, [
+    body('nouveau')
+        .isLength({ min: 8 }).withMessage('Mot de passe minimum 8 caractères')
+        .matches(/[A-Z]/).withMessage('Le mot de passe doit contenir au moins 1 majuscule')
+        .matches(/[a-z]/).withMessage('Le mot de passe doit contenir au moins 1 minuscule')
+        .matches(/[0-9]/).withMessage('Le mot de passe doit contenir au moins 1 chiffre')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ erreurs: errors.array() });
+    const db = req.app.get('db');
+    const { actuel, nouveau } = req.body || {};
+    try {
+        const [rows] = await db.query('SELECT id, mot_de_passe FROM utilisateurs WHERE id = ?', [req.user.id]);
+        if (!rows[0] || typeof actuel !== 'string' || !(await bcrypt.compare(actuel, rows[0].mot_de_passe))) {
+            return res.status(401).json({ message: 'Mot de passe actuel incorrect' });
+        }
+        if (actuel === nouveau) return res.status(400).json({ message: 'Le nouveau mot de passe doit être différent de l\'ancien' });
+        const hash = await bcrypt.hash(nouveau, await bcrypt.genSalt(10));
+        await db.query('UPDATE utilisateurs SET mot_de_passe = ? WHERE id = ?', [hash, req.user.id]);
+        try {
+            await db.query('UPDATE utilisateurs SET mdp_provisoire_expire = NULL WHERE id = ?', [req.user.id]);
+        } catch (e) { if (e.code !== 'ER_BAD_FIELD_ERROR') throw e; }
+        res.json({ message: 'Mot de passe modifié' });
+    } catch (error) {
+        console.error('Erreur PUT /mot-de-passe:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+});
+
 // ============================================================
 // EXPORTER LE ROUTER
 // ============================================================
