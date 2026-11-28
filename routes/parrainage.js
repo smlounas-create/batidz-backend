@@ -35,6 +35,25 @@ function reglesParrainage() {
 }
 const colonneAbsente = (e) => e && (e.code === 'ER_BAD_FIELD_ERROR' || e.code === 'ER_NO_SUCH_TABLE');
 
+// ⭐ La date d'inscription n'a pas le même nom (ou n'existe pas) selon la façon dont la table
+//    utilisateurs a été créée. On regarde une fois quelles colonnes existent, au lieu de supposer
+//    « date_creation » : sinon la page de parrainage restait sur « bientôt disponible ».
+const NOMS_DATE_INSCRIPTION = ['date_creation', 'date_inscription', 'created_at', 'createdAt', 'date_ajout'];
+let colonneDateConnue;   // undefined = pas encore regardé ; null = aucune colonne de date
+async function colonneDateInscription(db) {
+    if (colonneDateConnue !== undefined) return colonneDateConnue;
+    try {
+        const [colonnes] = await db.query('SHOW COLUMNS FROM utilisateurs');
+        const noms = (colonnes || []).map(c => c.Field);
+        colonneDateConnue = NOMS_DATE_INSCRIPTION.find(n => noms.includes(n)) || null;
+        return colonneDateConnue;
+    } catch (e) {
+        return null;   // on réessaiera à la prochaine demande
+    }
+}
+// Message clair pour le journal Render et pour l'administrateur : quelle colonne manque
+const detailColonne = (e) => String((e && e.sqlMessage) || (e && e.message) || '').slice(0, 200);
+
 // À l'inscription : source et parrain (appelé par routes/auth.js, ne bloque jamais l'inscription)
 async function enregistrerParrainage(db, nouveauId, { source, parrainId } = {}) {
     const sourcePropre = SOURCES.includes(source) ? source : null;
@@ -114,12 +133,16 @@ router.get('/', authenticateToken, async (req, res) => {
         const [moi] = await db.query('SELECT id, profil FROM utilisateurs WHERE id = ?', [req.user.id]);
         if (!moi[0]) return res.status(404).json({ message: 'Utilisateur non trouvé' });
         let invites = [];
+        const colonneDate = await colonneDateInscription(db);   // nom pris dans une liste fixe : pas d'injection
         try {
             [invites] = await db.query(
-                `SELECT nom_complet, profil, date_creation, parrainage_recompense_le
-                 FROM utilisateurs WHERE parrain_id = ? ORDER BY date_creation DESC LIMIT 100`, [req.user.id]);
+                `SELECT nom_complet, profil, ${colonneDate ? `\`${colonneDate}\`` : 'NULL'} AS date_inscription, parrainage_recompense_le
+                 FROM utilisateurs WHERE parrain_id = ? ORDER BY ${colonneDate ? `\`${colonneDate}\`` : 'id'} DESC LIMIT 100`, [req.user.id]);
         } catch (e) {
-            if (colonneAbsente(e)) return res.status(503).json({ message: 'Table parrainage absente' });
+            if (colonneAbsente(e)) {
+                console.error('Parrainage indisponible :', detailColonne(e));
+                return res.status(503).json({ message: 'Table parrainage absente', detail: detailColonne(e) });
+            }
             throw e;
         }
         res.json({
@@ -130,7 +153,7 @@ router.get('/', authenticateToken, async (req, res) => {
             invites: invites.map(i => ({
                 prenom: String(i.nom_complet || '').trim().split(/\s+/)[0],   // le prénom seulement
                 profil: i.profil,
-                date_inscription: i.date_creation,
+                date_inscription: i.date_inscription || null,
                 recompense: !!i.parrainage_recompense_le
             }))
         });
@@ -145,3 +168,4 @@ module.exports.SOURCES = SOURCES;
 module.exports.enregistrerParrainage = enregistrerParrainage;
 module.exports.recompenserParrain = recompenserParrain;
 module.exports.reglesParrainage = reglesParrainage;
+module.exports.colonneDateInscription = colonneDateInscription;

@@ -13,6 +13,7 @@ const bcrypt = require('bcryptjs');
 const { tarifs, coordonneesSite } = require('./paiements');
 const { creerNotification } = require('./notifications');
 const { conditionTelephone } = require('./auth');
+const { colonneDateInscription } = require('./parrainage');
 const crypto = require('crypto');
 
 async function exigerAdmin(req, res, next) {
@@ -52,7 +53,11 @@ router.get('/tableau-de-bord', authenticateToken, exigerAdmin, async (req, res) 
         const parProfil = await lire(db, 'SELECT profil, COUNT(*) AS n FROM utilisateurs GROUP BY profil');
         const mois = await lire(db, "SELECT COUNT(*) AS nombre, COALESCE(SUM(montant), 0) AS montant FROM paiements WHERE statut = 'valide' AND date_traitement >= DATE_FORMAT(CURDATE(), '%Y-%m-01')");
         // ⭐ D'où viennent les inscrits des 30 derniers jours, et qui invite le plus
-        const sources = await lire(db, "SELECT COALESCE(source_inscription, 'non_renseigne') AS source, COUNT(*) AS n FROM utilisateurs WHERE date_creation >= NOW() - INTERVAL 30 DAY GROUP BY COALESCE(source_inscription, 'non_renseigne') ORDER BY n DESC");
+        //    Sans colonne de date d'inscription dans la table, on compte tous les inscrits.
+        const colonneDate = await colonneDateInscription(db);
+        const sources = await lire(db, `SELECT COALESCE(source_inscription, 'non_renseigne') AS source, COUNT(*) AS n FROM utilisateurs
+                                        ${colonneDate ? `WHERE \`${colonneDate}\` >= NOW() - INTERVAL 30 DAY` : ''}
+                                        GROUP BY COALESCE(source_inscription, 'non_renseigne') ORDER BY n DESC`);
         const parrains = await lire(db, `SELECT p.id, p.nom_complet, p.profil, COUNT(f.id) AS invites, SUM(f.parrainage_recompense_le IS NOT NULL) AS actifs
                                           FROM utilisateurs f JOIN utilisateurs p ON p.id = f.parrain_id
                                           GROUP BY p.id, p.nom_complet, p.profil ORDER BY invites DESC LIMIT 5`);
@@ -77,6 +82,7 @@ router.get('/tableau-de-bord', authenticateToken, exigerAdmin, async (req, res) 
             },
             acquisition: {
                 sources: sources ? sources.map(r => ({ source: r.source, n: Number(r.n) || 0 })) : null,
+                periode_jours: colonneDate ? 30 : null,
                 parrains: parrains ? parrains.map(r => ({ id: r.id, nom_complet: r.nom_complet, profil: r.profil, invites: Number(r.invites) || 0, actifs: Number(r.actifs) || 0 })) : null
             }
         });
